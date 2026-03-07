@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: user-pod
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-user-pod
+    app.kubernetes.io/part-of: web-os
+spec:
+  restartPolicy: Always
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+    - name: home-opencode
+      emptyDir: {}
+    - name: secrets
+      emptyDir: {}
+  containers:
+    - name: opencode
+      image: docker.io/library/web-os-opencode:latest
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 4096
+          name: opencode-http
+      volumeMounts:
+        - name: home-opencode
+          mountPath: /home/opencode
+        - name: secrets
+          mountPath: /secrets
+          readOnly: true
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: false
+        capabilities:
+          drop:
+            - ALL
+      readinessProbe:
+        tcpSocket:
+          port: 4096
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      livenessProbe:
+        tcpSocket:
+          port: 4096
+        initialDelaySeconds: 15
+        periodSeconds: 20
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 2Gi
+    - name: httpsig-sidecar
+      image: docker.io/library/web-os-opencode-sidecar:latest
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 3001
+          name: httpsig-http
+      env:
+        - name: PORT
+          value: "3001"
+        - name: OWNER_KEY_ID
+          value: owner
+        - name: OWNER_PUBLIC_KEY_PEM
+          value: |
+            -----BEGIN PUBLIC KEY-----
+            MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAKfSxv2f8A4QpDUS8V4nX5xv2wJfQv1n
+            bY1q4mN8Twd0FfA8t8W1Ih4kN3f+8SgXj7vK2d8Qy7Q8m7P2mM8N6DECAwEAAQ==
+            -----END PUBLIC KEY-----
+      volumeMounts:
+        - name: secrets
+          mountPath: /secrets
+          readOnly: true
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: false
+        capabilities:
+          drop:
+            - ALL
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 3001
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 3001
+        initialDelaySeconds: 15
+        periodSeconds: 20
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
