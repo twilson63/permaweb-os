@@ -1,4 +1,5 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { verifyHttpMessageSignature } from "./httpSig";
 
 const port = Number(process.env.PORT) || 3001;
 
@@ -12,7 +13,19 @@ function sendJson(res: ServerResponse, statusCode: number, body: unknown): void 
   res.end(JSON.stringify(body));
 }
 
-const server = createServer((req, res) => {
+function toHeaderRecord(req: IncomingMessage): Record<string, string | string[]> {
+  const headers: Record<string, string | string[]> = {};
+
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value !== undefined) {
+      headers[name] = value;
+    }
+  }
+
+  return headers;
+}
+
+const server = createServer(async (req, res) => {
   if (req.url === "/health" && req.method === "GET") {
     sendJson(res, 200, { status: "ok" });
     return;
@@ -24,7 +37,36 @@ const server = createServer((req, res) => {
       return;
     }
 
-    sendJson(res, 501, { error: "httpsig verification not implemented" });
+    const ownerPublicKeyPem = process.env.OWNER_PUBLIC_KEY_PEM;
+    const ownerKeyId = process.env.OWNER_KEY_ID || "owner";
+
+    if (!ownerPublicKeyPem) {
+      sendJson(res, 500, { error: "missing OWNER_PUBLIC_KEY_PEM configuration" });
+      return;
+    }
+
+    const verified = await verifyHttpMessageSignature(
+      {
+        method: req.method,
+        url: req.url,
+        headers: toHeaderRecord(req),
+        protocol: "http",
+      },
+      async (keyId) => {
+        if (keyId !== ownerKeyId) {
+          return undefined;
+        }
+
+        return ownerPublicKeyPem;
+      },
+    );
+
+    if (!verified) {
+      sendJson(res, 401, { error: "invalid signature" });
+      return;
+    }
+
+    sendJson(res, 200, { status: "verified", keyId: ownerKeyId });
     return;
   }
 
