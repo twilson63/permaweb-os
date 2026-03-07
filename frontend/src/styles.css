@@ -1,0 +1,136 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #1b1f24;
+  background: #f3f6fa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.app-shell {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 3rem;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.app-header p {
+  margin: 0.25rem 0 0;
+  color: #55606d;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+button {
+  border: 1px solid #c4cdd6;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1b1f24;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: #0b67d6;
+  border-color: #0b67d6;
+  color: #ffffff;
+}
+
+button.danger {
+  background: #fdf2f2;
+  border-color: #efb8b8;
+  color: #b42318;
+}
+
+.error {
+  margin: 1rem 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.empty-state {
+  margin-top: 1.2rem;
+  color: #55606d;
+}
+
+.pod-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.pod-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid #d5dce4;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.pod-card h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.pod-card dl {
+  margin: 0;
+}
+
+.pod-card dl div {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+}
+
+.pod-card dt {
+  font-weight: 700;
+}
+
+.pod-card dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+@media (max-width: 700px) {
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
