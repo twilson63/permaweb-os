@@ -43,3 +43,33 @@ test("POST /api/pods creates a pod and returns subdomain", async () => {
     await server.close();
   }
 });
+
+test("GET /api/pods lists created pods", async () => {
+  const server = await startTestServer();
+
+  try {
+    await fetch(`${server.baseUrl}/api/pods`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "alpha" })
+    });
+
+    await fetch(`${server.baseUrl}/api/pods`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "beta" })
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/pods`);
+    assert.equal(response.status, 200);
+
+    const payload = await response.json();
+    assert.equal(Array.isArray(payload.pods), true);
+    assert.equal(payload.pods.length, 2);
+    assert.equal(payload.pods[0].name, "alpha");
+    assert.equal(payload.pods[1].name, "beta");
+    assert.equal(typeof payload.pods[0].subdomain, "string");
+  } finally {
+    await server.close();
+  }
+});

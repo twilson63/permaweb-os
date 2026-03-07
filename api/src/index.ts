@@ -11,6 +11,10 @@ export const createApp = (store: PodStore = new PodStore()) => {
     res.status(201).json(pod);
   });
 
+  app.get("/api/pods", (_req, res) => {
+    res.json({ pods: store.list() });
+  });
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
