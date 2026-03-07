@@ -93,3 +93,22 @@ Examples:
 WEB_OS_CLUSTER_PROVIDER=kind ./scripts/teardown.sh
 WEB_OS_CLUSTER_PROVIDER=minikube ./scripts/teardown.sh
 ```
+
+## Wildcard ingress (P1-S4)
+
+After cluster bootstrap, deploy the pod resources with wildcard ingress:
+
+```bash
+POD_BASE_DOMAIN=127.0.0.1.nip.io ./scripts/deploy-pod.sh
+```
+
+Validate wildcard DNS + ingress routing:
+
+```bash
+POD_BASE_DOMAIN=127.0.0.1.nip.io ./scripts/verify-wildcard-ingress.sh
+```
+
+This config creates ingress rules for `*.127.0.0.1.nip.io` and routes:
+
+- `/health` and `/verify` to the HTTPSig sidecar (API)
+- `/` to the OpenCode container (frontend)

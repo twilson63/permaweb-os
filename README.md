@@ -66,3 +66,22 @@ Detailed setup notes: `docs/local-cluster-bootstrap.md`
 ## Development
 
 Post tasks to `#web-os` with `@opencode` mention.
+
+## Wildcard Ingress for Pod Subdomains
+
+Deploy a pod with service + wildcard ingress:
+
+```bash
+POD_BASE_DOMAIN=127.0.0.1.nip.io ./scripts/deploy-pod.sh
+```
+
+Verify DNS and ingress behavior:
+
+```bash
+POD_BASE_DOMAIN=127.0.0.1.nip.io ./scripts/verify-wildcard-ingress.sh
+```
+
+Notes:
+
+- `POD_BASE_DOMAIN` controls wildcard host matching (`*.${POD_BASE_DOMAIN}`)
+- Default domain is `127.0.0.1.nip.io`, which supports wildcard DNS locally

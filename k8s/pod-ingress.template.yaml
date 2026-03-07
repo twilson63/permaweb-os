@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: user-pod
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-user-pod
+    app.kubernetes.io/part-of: web-os
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: "*.pods.local"
+      http:
+        paths:
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: user-pod
+                port:
+                  name: httpsig-http
+          - path: /verify
+            pathType: Prefix
+            backend:
+              service:
+                name: user-pod
+                port:
+                  name: httpsig-http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: user-pod
+                port:
+                  name: opencode-http
