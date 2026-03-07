@@ -9,4 +9,8 @@ if ! command -v minikube >/dev/null 2>&1; then
 fi
 
 printf "Deleting minikube profile '%s'\n" "$PROFILE"
-minikube delete --profile "$PROFILE"
+if minikube profile list -o json 2>/dev/null | grep -q "\"Name\":\"${PROFILE}\""; then
+  minikube delete --profile "$PROFILE"
+else
+  printf "Minikube profile '%s' does not exist; nothing to delete\n" "$PROFILE"
+fi

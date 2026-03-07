@@ -7,6 +7,7 @@ NAMESPACE="${K8S_NAMESPACE:-${WEB_OS_NAMESPACE:-web-os}}"
 KIND_CONFIG="${KIND_CONFIG:-}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAMESPACE_MANIFEST="${ROOT_DIR}/k8s/namespace.yaml"
+INGRESS_MANIFEST_URL="${KIND_INGRESS_MANIFEST_URL:-https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml}"
 
 require_command() {
   local cmd="$1"
@@ -38,6 +39,10 @@ fi
 echo "==> Switching kubectl context to kind-${CLUSTER_NAME}"
 kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null
 
+echo "==> Ensuring single-node kind cluster can schedule workloads"
+kubectl taint nodes --all node-role.kubernetes.io/control-plane- >/dev/null 2>&1 || true
+kubectl taint nodes --all node-role.kubernetes.io/master- >/dev/null 2>&1 || true
+
 if [[ -f "$NAMESPACE_MANIFEST" ]]; then
   echo "==> Applying namespace manifest"
   kubectl apply -f "$NAMESPACE_MANIFEST" >/dev/null
@@ -45,6 +50,14 @@ else
   echo "==> Namespace manifest not found, creating namespace '${NAMESPACE}' directly"
   kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 fi
+
+echo "==> Applying ingress-nginx controller for kind"
+kubectl apply -f "$INGRESS_MANIFEST_URL" >/dev/null
+
+echo "==> Waiting for ingress-nginx controller to be ready"
+kubectl wait --namespace ingress-nginx \
+  --for=condition=available deployment/ingress-nginx-controller \
+  --timeout=180s >/dev/null
 
 echo
 echo "Bootstrap complete."
