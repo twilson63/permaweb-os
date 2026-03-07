@@ -1,0 +1,41 @@
+import { randomUUID } from "crypto";
+import { CreatePodInput, Pod } from "./types";
+
+export class PodStore {
+  private readonly pods = new Map<string, Pod>();
+  private readonly baseDomain: string;
+
+  constructor(baseDomain: string = process.env.POD_BASE_DOMAIN || "pods.local") {
+    this.baseDomain = baseDomain;
+  }
+
+  create(input: CreatePodInput = {}): Pod {
+    const id = randomUUID();
+    const pod: Pod = {
+      id,
+      name: input.name?.trim() || `pod-${id.slice(0, 8)}`,
+      status: "running",
+      subdomain: `${id}.${this.baseDomain}`,
+      createdAt: new Date().toISOString()
+    };
+
+    this.pods.set(id, pod);
+    return pod;
+  }
+
+  list(): Pod[] {
+    return Array.from(this.pods.values());
+  }
+
+  get(id: string): Pod | undefined {
+    return this.pods.get(id);
+  }
+
+  delete(id: string): boolean {
+    return this.pods.delete(id);
+  }
+
+  clear(): void {
+    this.pods.clear();
+  }
+}
