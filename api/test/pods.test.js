@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { Wallet } = require("ethers");
 const { createApp } = require("../dist/index.js");
 const { PodStore } = require("../dist/pods/store.js");
 
@@ -145,6 +146,69 @@ test("DELETE /api/pods/:id returns 404 for unknown pod", async () => {
     assert.equal(response.status, 404);
     const payload = await response.json();
     assert.equal(payload.error, "Pod not found");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/auth/verify returns session token for valid signature", async () => {
+  const server = await startTestServer();
+
+  try {
+    const wallet = Wallet.createRandom();
+    const nonceResponse = await fetch(`${server.baseUrl}/api/auth/nonce`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address: wallet.address })
+    });
+
+    assert.equal(nonceResponse.status, 200);
+    const challenge = await nonceResponse.json();
+    assert.equal(typeof challenge.message, "string");
+    assert.equal(typeof challenge.nonce, "string");
+
+    const signature = await wallet.signMessage(challenge.message);
+    const verifyResponse = await fetch(`${server.baseUrl}/api/auth/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address: wallet.address, signature })
+    });
+
+    assert.equal(verifyResponse.status, 200);
+    const session = await verifyResponse.json();
+    assert.equal(typeof session.token, "string");
+    assert.equal(session.address, wallet.address);
+    assert.equal(typeof session.expiresAt, "string");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/auth/verify rejects invalid signature", async () => {
+  const server = await startTestServer();
+
+  try {
+    const wallet = Wallet.createRandom();
+    const otherWallet = Wallet.createRandom();
+    const nonceResponse = await fetch(`${server.baseUrl}/api/auth/nonce`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address: wallet.address })
+    });
+
+    assert.equal(nonceResponse.status, 200);
+    const challenge = await nonceResponse.json();
+    const invalidSignature = await otherWallet.signMessage(challenge.message);
+
+    const verifyResponse = await fetch(`${server.baseUrl}/api/auth/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address: wallet.address, signature: invalidSignature })
+    });
+
+    assert.equal(verifyResponse.status, 401);
+    const payload = await verifyResponse.json();
+    assert.equal(payload.error, "Invalid or expired signature challenge");
   } finally {
     await server.close();
   }

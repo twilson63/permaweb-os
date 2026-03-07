@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createPod, deletePod, listPods, type Pod } from "./api";
+import {
+  createPod,
+  deletePod,
+  listPods,
+  requestWalletChallenge,
+  type Pod,
+  type WalletAuthSession,
+  verifyWalletSignature
+} from "./api";
+
+interface EthereumProvider {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+}
+
+interface WindowWithEthereum extends Window {
+  ethereum?: EthereumProvider;
+}
 
 const formatDate = (value: string): string => {
   const date = new Date(value);
@@ -12,6 +28,11 @@ const App = () => {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState<string | null>(() => localStorage.getItem("webos.walletAddress"));
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(() =>
+    localStorage.getItem("webos.sessionExpiresAt")
+  );
+  const [connectingWallet, setConnectingWallet] = useState(false);
 
   const podCountLabel = useMemo(
     () => `${pods.length} pod${pods.length === 1 ? "" : "s"}`,
@@ -32,6 +53,22 @@ const App = () => {
       setLoading(false);
     }
   }, []);
+
+  const walletLabel = useMemo(() => {
+    if (!walletAddress) {
+      return "Connect Wallet";
+    }
+
+    return `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
+  }, [walletAddress]);
+
+  const sessionLabel = useMemo(() => {
+    if (!sessionExpiresAt) {
+      return null;
+    }
+
+    return `Session active until ${formatDate(sessionExpiresAt)}`;
+  }, [sessionExpiresAt]);
 
   useEffect(() => {
     void refreshPods();
@@ -67,14 +104,61 @@ const App = () => {
     }
   };
 
+  const onConnectWallet = async () => {
+    setConnectingWallet(true);
+    setError(null);
+
+    try {
+      const browserWindow = window as WindowWithEthereum;
+
+      if (!browserWindow.ethereum) {
+        throw new Error("No Ethereum wallet found. Install MetaMask or compatible wallet.");
+      }
+
+      const accountsResponse = await browserWindow.ethereum.request({ method: "eth_requestAccounts" });
+
+      if (!Array.isArray(accountsResponse) || accountsResponse.length === 0 || typeof accountsResponse[0] !== "string") {
+        throw new Error("Wallet did not return an account");
+      }
+
+      const address = accountsResponse[0];
+      const challenge = await requestWalletChallenge(address);
+      const signatureResponse = await browserWindow.ethereum.request({
+        method: "personal_sign",
+        params: [challenge.message, address]
+      });
+
+      if (typeof signatureResponse !== "string") {
+        throw new Error("Wallet did not return a signature");
+      }
+
+      const session: WalletAuthSession = await verifyWalletSignature(address, signatureResponse);
+
+      localStorage.setItem("webos.sessionToken", session.token);
+      localStorage.setItem("webos.walletAddress", session.address);
+      localStorage.setItem("webos.sessionExpiresAt", session.expiresAt);
+      setWalletAddress(session.address);
+      setSessionExpiresAt(session.expiresAt);
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : "Wallet connection failed";
+      setError(message);
+    } finally {
+      setConnectingWallet(false);
+    }
+  };
+
   return (
     <main className="app-shell">
       <header className="app-header">
         <div>
           <h1>Pod Lifecycle</h1>
           <p>{podCountLabel}</p>
+          {sessionLabel ? <p>{sessionLabel}</p> : null}
         </div>
         <div className="header-actions">
+          <button type="button" className={walletAddress ? "secondary" : "primary"} onClick={() => void onConnectWallet()} disabled={connectingWallet}>
+            {connectingWallet ? "Connecting..." : walletLabel}
+          </button>
           <button type="button" onClick={() => void refreshPods()} disabled={loading}>
             Refresh
           </button>

@@ -11,6 +11,7 @@
     "dev": "tsc -w -p tsconfig.json"
   },
   "dependencies": {
+    "ethers": "^5.8.0",
     "express": "^4.21.2"
   },
   "devDependencies": {
