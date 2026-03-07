@@ -26,6 +26,17 @@ export const createApp = (store: PodStore = new PodStore()) => {
     res.json(pod);
   });
 
+  app.delete("/api/pods/:id", (req, res) => {
+    const deleted = store.delete(req.params.id);
+
+    if (!deleted) {
+      res.status(404).json({ error: "Pod not found" });
+      return;
+    }
+
+    res.status(204).send();
+  });
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });

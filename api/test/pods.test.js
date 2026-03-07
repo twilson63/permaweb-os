@@ -110,3 +110,42 @@ test("GET /api/pods/:id returns 404 for unknown pod", async () => {
     await server.close();
   }
 });
+
+test("DELETE /api/pods/:id deletes pod", async () => {
+  const server = await startTestServer();
+
+  try {
+    const created = await fetch(`${server.baseUrl}/api/pods`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "alpha" })
+    });
+
+    const pod = await created.json();
+    const deleted = await fetch(`${server.baseUrl}/api/pods/${pod.id}`, {
+      method: "DELETE"
+    });
+    assert.equal(deleted.status, 204);
+
+    const lookup = await fetch(`${server.baseUrl}/api/pods/${pod.id}`);
+    assert.equal(lookup.status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+test("DELETE /api/pods/:id returns 404 for unknown pod", async () => {
+  const server = await startTestServer();
+
+  try {
+    const response = await fetch(`${server.baseUrl}/api/pods/missing-id`, {
+      method: "DELETE"
+    });
+
+    assert.equal(response.status, 404);
+    const payload = await response.json();
+    assert.equal(payload.error, "Pod not found");
+  } finally {
+    await server.close();
+  }
+});
