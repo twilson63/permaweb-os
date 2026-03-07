@@ -73,3 +73,40 @@ test("GET /api/pods lists created pods", async () => {
     await server.close();
   }
 });
+
+test("GET /api/pods/:id returns pod status and subdomain", async () => {
+  const server = await startTestServer();
+
+  try {
+    const created = await fetch(`${server.baseUrl}/api/pods`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "alpha" })
+    });
+
+    const pod = await created.json();
+    const response = await fetch(`${server.baseUrl}/api/pods/${pod.id}`);
+    assert.equal(response.status, 200);
+
+    const payload = await response.json();
+    assert.equal(payload.id, pod.id);
+    assert.equal(payload.status, "running");
+    assert.equal(typeof payload.subdomain, "string");
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/pods/:id returns 404 for unknown pod", async () => {
+  const server = await startTestServer();
+
+  try {
+    const response = await fetch(`${server.baseUrl}/api/pods/missing-id`);
+    assert.equal(response.status, 404);
+
+    const payload = await response.json();
+    assert.equal(payload.error, "Pod not found");
+  } finally {
+    await server.close();
+  }
+});

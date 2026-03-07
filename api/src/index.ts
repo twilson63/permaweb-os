@@ -15,6 +15,17 @@ export const createApp = (store: PodStore = new PodStore()) => {
     res.json({ pods: store.list() });
   });
 
+  app.get("/api/pods/:id", (req, res) => {
+    const pod = store.get(req.params.id);
+
+    if (!pod) {
+      res.status(404).json({ error: "Pod not found" });
+      return;
+    }
+
+    res.json(pod);
+  });
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
