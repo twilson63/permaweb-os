@@ -1,0 +1,9 @@
+node_modules/
+dist/
+
+api/node_modules/
+api/dist/
+frontend/node_modules/
+frontend/dist/
+opencode-sidecar/node_modules/
+opencode-sidecar/dist/
