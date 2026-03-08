@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { CreatePodInput, Pod } from "./types";
+import { CreatePodInput, Pod, PodLlmConfig } from "./types";
 
 export class PodStore {
   private readonly pods = new Map<string, Pod>();
@@ -9,7 +9,7 @@ export class PodStore {
     this.baseDomain = baseDomain;
   }
 
-  create(ownerWallet: string, input: CreatePodInput = {}): Pod {
+  create(ownerWallet: string, input: CreatePodInput = {}, llm: PodLlmConfig): Pod {
     const id = randomUUID();
     const pod: Pod = {
       id,
@@ -17,7 +17,8 @@ export class PodStore {
       status: "running",
       subdomain: `${id}.${this.baseDomain}`,
       ownerWallet,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      llm
     };
 
     this.pods.set(id, pod);

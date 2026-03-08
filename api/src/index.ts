@@ -2,6 +2,7 @@ import express from "express";
 import { Response } from "express";
 import { createSessionAuthMiddleware, SessionLocals } from "./auth/middleware";
 import { AuthStore } from "./auth/store";
+import { listSupportedModels, resolveModelSelection } from "./llm/modelRegistry";
 import { LlmSecretStore } from "./llm/secretStore";
 import { PodStore } from "./pods/store";
 
@@ -62,7 +63,17 @@ export const createApp = (
   };
 
   app.post("/api/pods", requireSession, (req, res: Response<unknown, SessionLocals>) => {
-    const pod = store.create(getSessionAddress(res), req.body);
+    const modelSelection = resolveModelSelection(req.body?.model);
+
+    if (!modelSelection) {
+      res.status(400).json({
+        error: "Unsupported model selection",
+        supportedModels: listSupportedModels()
+      });
+      return;
+    }
+
+    const pod = store.create(getSessionAddress(res), req.body, modelSelection);
     res.status(201).json(pod);
   });
 

@@ -51,14 +51,15 @@ const createSession = async (server, wallet = Wallet.createRandom()) => {
   };
 };
 
-const createPod = async (server, session, name = "alpha") => {
+const createPod = async (server, session, input = "alpha") => {
+  const body = typeof input === "string" ? { name: input } : input;
   const response = await fetch(`${server.baseUrl}/api/pods`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${session.token}`
     },
-    body: JSON.stringify({ name })
+    body: JSON.stringify(body)
   });
 
   return response;
@@ -345,6 +346,75 @@ test("GET /api/llm/providers returns configured providers without key values", a
   } finally {
     await server.close();
     rmSync(secretsDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/pods accepts model selection and stores provider key path", async () => {
+  const server = await startTestServer();
+
+  try {
+    const { session } = await createSession(server);
+    const response = await createPod(server, session, {
+      name: "alpha",
+      model: "anthropic/claude-3-5-haiku"
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.llm.model, "anthropic/claude-3-5-haiku");
+    assert.equal(payload.llm.provider, "anthropic");
+    assert.equal(payload.llm.keyPath, "/secrets/llm/anthropic");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/pods maps different model providers to different key files", async () => {
+  const server = await startTestServer();
+
+  try {
+    const { session } = await createSession(server);
+    const openaiResponse = await createPod(server, session, {
+      name: "openai-pod",
+      model: "openai/gpt-4o-mini"
+    });
+    const anthropicResponse = await createPod(server, session, {
+      name: "anthropic-pod",
+      model: "anthropic/claude-3-7-sonnet"
+    });
+
+    assert.equal(openaiResponse.status, 201);
+    assert.equal(anthropicResponse.status, 201);
+
+    const openaiPod = await openaiResponse.json();
+    const anthropicPod = await anthropicResponse.json();
+
+    assert.equal(openaiPod.llm.provider, "openai");
+    assert.equal(openaiPod.llm.keyPath, "/secrets/llm/openai");
+    assert.equal(anthropicPod.llm.provider, "anthropic");
+    assert.equal(anthropicPod.llm.keyPath, "/secrets/llm/anthropic");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/pods rejects unsupported model selection", async () => {
+  const server = await startTestServer();
+
+  try {
+    const { session } = await createSession(server);
+    const response = await createPod(server, session, {
+      name: "alpha",
+      model: "invalid/model"
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json();
+    assert.equal(payload.error, "Unsupported model selection");
+    assert.equal(Array.isArray(payload.supportedModels), true);
+    assert.equal(payload.supportedModels.includes("openai/gpt-4o-mini"), true);
+  } finally {
+    await server.close();
   }
 });
 
