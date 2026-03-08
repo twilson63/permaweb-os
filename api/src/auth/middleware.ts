@@ -1,5 +1,9 @@
 import { NextFunction, Request, Response } from "express";
-import { AuthStore } from "./store";
+import { AuthStore, SessionIdentity } from "./store";
+
+export interface SessionLocals {
+  session: SessionIdentity;
+}
 
 const getBearerToken = (authorizationHeader: string | undefined): string | null => {
   if (!authorizationHeader) {
@@ -30,6 +34,8 @@ export const createSessionAuthMiddleware = (authStore: AuthStore) => {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
+
+    res.locals.session = session;
 
     next();
   };

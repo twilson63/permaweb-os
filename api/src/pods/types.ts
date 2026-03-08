@@ -5,6 +5,7 @@ export interface Pod {
   name: string;
   status: PodStatus;
   subdomain: string;
+  ownerWallet: string;
   createdAt: string;
 }
 

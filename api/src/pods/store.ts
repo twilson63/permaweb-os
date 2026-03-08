@@ -9,13 +9,14 @@ export class PodStore {
     this.baseDomain = baseDomain;
   }
 
-  create(input: CreatePodInput = {}): Pod {
+  create(ownerWallet: string, input: CreatePodInput = {}): Pod {
     const id = randomUUID();
     const pod: Pod = {
       id,
       name: input.name?.trim() || `pod-${id.slice(0, 8)}`,
       status: "running",
       subdomain: `${id}.${this.baseDomain}`,
+      ownerWallet,
       createdAt: new Date().toISOString()
     };
 
@@ -23,8 +24,8 @@ export class PodStore {
     return pod;
   }
 
-  list(): Pod[] {
-    return Array.from(this.pods.values());
+  list(ownerWallet: string): Pod[] {
+    return Array.from(this.pods.values()).filter((pod) => pod.ownerWallet === ownerWallet);
   }
 
   get(id: string): Pod | undefined {

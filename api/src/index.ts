@@ -1,5 +1,6 @@
 import express from "express";
-import { createSessionAuthMiddleware } from "./auth/middleware";
+import { Response } from "express";
+import { createSessionAuthMiddleware, SessionLocals } from "./auth/middleware";
 import { AuthStore } from "./auth/store";
 import { PodStore } from "./pods/store";
 
@@ -51,16 +52,20 @@ export const createApp = (store: PodStore = new PodStore(), authStore: AuthStore
     }
   });
 
-  app.post("/api/pods", (req, res) => {
-    const pod = store.create(req.body);
+  const getSessionAddress = (res: Response<unknown, SessionLocals>): string => {
+    return res.locals.session.address;
+  };
+
+  app.post("/api/pods", requireSession, (req, res: Response<unknown, SessionLocals>) => {
+    const pod = store.create(getSessionAddress(res), req.body);
     res.status(201).json(pod);
   });
 
-  app.get("/api/pods", requireSession, (_req, res) => {
-    res.json({ pods: store.list() });
+  app.get("/api/pods", requireSession, (_req, res: Response<unknown, SessionLocals>) => {
+    res.json({ pods: store.list(getSessionAddress(res)) });
   });
 
-  app.get("/api/pods/:id", requireSession, (req, res) => {
+  app.get("/api/pods/:id", requireSession, (req, res: Response<unknown, SessionLocals>) => {
     const pod = store.get(req.params.id);
 
     if (!pod) {
@@ -68,10 +73,27 @@ export const createApp = (store: PodStore = new PodStore(), authStore: AuthStore
       return;
     }
 
+    if (pod.ownerWallet !== getSessionAddress(res)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
     res.json(pod);
   });
 
-  app.delete("/api/pods/:id", requireSession, (req, res) => {
+  app.delete("/api/pods/:id", requireSession, (req, res: Response<unknown, SessionLocals>) => {
+    const pod = store.get(req.params.id);
+
+    if (!pod) {
+      res.status(404).json({ error: "Pod not found" });
+      return;
+    }
+
+    if (pod.ownerWallet !== getSessionAddress(res)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
     const deleted = store.delete(req.params.id);
 
     if (!deleted) {
