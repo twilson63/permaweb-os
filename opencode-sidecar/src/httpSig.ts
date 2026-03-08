@@ -1,11 +1,13 @@
 import { constants, verify as verifyDigestSignature } from "node:crypto";
+import { verifyMessage } from "ethers";
 import { verify, type Parameters, type RequestLike } from "http-message-sig";
 
 export type HttpSigAlgorithm =
   | "rsa-v1_5-sha256"
   | "rsa-pss-sha512"
   | "ecdsa-p256-sha256"
-  | "ecdsa-p384-sha384";
+  | "ecdsa-p384-sha384"
+  | "eth-personal-sign";
 
 export type PublicKeyResolver = (
   keyId: string,
@@ -32,9 +34,27 @@ function parseAlgorithm(value: unknown): HttpSigAlgorithm | null {
     case "rsa-pss-sha512":
     case "ecdsa-p256-sha256":
     case "ecdsa-p384-sha384":
+    case "eth-personal-sign":
       return algorithm;
     default:
       return null;
+  }
+}
+
+function bytesToHex(value: Uint8Array): string {
+  return `0x${Buffer.from(value).toString("hex")}`;
+}
+
+function verifyEthereumPersonalSign(
+  keyId: string,
+  signingString: string,
+  signature: Uint8Array,
+): boolean {
+  try {
+    const recoveredAddress = verifyMessage(signingString, bytesToHex(signature));
+    return recoveredAddress.toLowerCase() === keyId.toLowerCase();
+  } catch {
+    return false;
   }
 }
 
@@ -69,12 +89,15 @@ function verifyByAlgorithm(
       return verifyDigestSignature("sha256", payload, publicKey, signature);
     case "ecdsa-p384-sha384":
       return verifyDigestSignature("sha384", payload, publicKey, signature);
+    default:
+      return false;
   }
 }
 
 export async function verifyHttpMessageSignature(
   request: RequestLike,
   resolvePublicKey: PublicKeyResolver,
+  expectedKeyId?: string,
 ): Promise<boolean> {
   try {
     return await verify(request, async (signingString, signature, params: Parameters) => {
@@ -83,6 +106,14 @@ export async function verifyHttpMessageSignature(
 
       if (!keyId || !algorithm) {
         return false;
+      }
+
+      if (expectedKeyId && keyId.toLowerCase() !== expectedKeyId.toLowerCase()) {
+        return false;
+      }
+
+      if (algorithm === "eth-personal-sign") {
+        return verifyEthereumPersonalSign(keyId, signingString, signature);
       }
 
       const publicKey = await resolvePublicKey(keyId, algorithm);
