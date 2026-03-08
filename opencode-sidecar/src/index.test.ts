@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer, Server } from "node:http";
 import test from "node:test";
 import { Wallet } from "ethers";
 import { signatureHeaders, type RequestLike, type Signer } from "http-message-sig";
@@ -39,20 +40,49 @@ async function createSignedHeaders(input: {
   });
 }
 
-test("POST /verify returns 200 for valid signed request", async () => {
+async function listen(server: Server): Promise<number> {
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const addressInfo = server.address();
+
+  if (!addressInfo || typeof addressInfo === "string") {
+    throw new Error("failed to get listening address");
+  }
+
+  return addressInfo.port;
+}
+
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+test("POST /verify proxies verified request as JSONL stream", async () => {
   const wallet = Wallet.createRandom();
   const ownerKeyId = wallet.address.toLowerCase();
-  const server = createSidecarServer({ ownerKeyId });
-
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  const openCodeServer = createServer((req, res) => {
+    assert.equal(req.url, "/verify");
+    assert.equal(req.method, "POST");
+    res.writeHead(200, { "content-type": "application/x-ndjson" });
+    res.write('{"type":"assistant_message","content":"hello"}\n');
+    res.end('{"type":"done","status":"success"}\n');
+  });
+  const openCodePort = await listen(openCodeServer);
+  const server = createSidecarServer({
+    ownerKeyId,
+    openCodeBaseUrl: `http://127.0.0.1:${openCodePort}`,
+  });
+  const sidecarPort = await listen(server);
 
   try {
-    const addressInfo = server.address();
-    if (!addressInfo || typeof addressInfo === "string") {
-      throw new Error("failed to get listening address");
-    }
-
-    const host = `127.0.0.1:${addressInfo.port}`;
+    const host = `127.0.0.1:${sidecarPort}`;
     const date = new Date().toUTCString();
     const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date });
 
@@ -67,34 +97,36 @@ test("POST /verify returns 200 for valid signed request", async () => {
     });
 
     assert.equal(response.status, 200);
-  } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
+    assert.equal(response.headers.get("content-type"), "application/x-ndjson");
 
-        resolve();
-      });
-    });
+    const body = await response.text();
+    assert.equal(
+      body,
+      '{"type":"assistant_message","content":"hello"}\n{"type":"done","status":"success"}\n',
+    );
+  } finally {
+    await Promise.all([close(server), close(openCodeServer)]);
   }
 });
 
 test("POST /verify returns 401 for invalid signature", async () => {
   const wallet = Wallet.createRandom();
   const ownerKeyId = wallet.address.toLowerCase();
-  const server = createSidecarServer({ ownerKeyId });
-
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  let upstreamCalled = false;
+  const openCodeServer = createServer((_req, res) => {
+    upstreamCalled = true;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}\n");
+  });
+  const openCodePort = await listen(openCodeServer);
+  const server = createSidecarServer({
+    ownerKeyId,
+    openCodeBaseUrl: `http://127.0.0.1:${openCodePort}`,
+  });
+  const sidecarPort = await listen(server);
 
   try {
-    const addressInfo = server.address();
-    if (!addressInfo || typeof addressInfo === "string") {
-      throw new Error("failed to get listening address");
-    }
-
-    const host = `127.0.0.1:${addressInfo.port}`;
+    const host = `127.0.0.1:${sidecarPort}`;
     const signedDate = new Date().toUTCString();
     const tamperedDate = new Date(Date.now() + 60_000).toUTCString();
     const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date: signedDate });
@@ -110,16 +142,8 @@ test("POST /verify returns 401 for invalid signature", async () => {
     });
 
     assert.equal(response.status, 401);
+    assert.equal(upstreamCalled, false);
   } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve();
-      });
-    });
+    await Promise.all([close(server), close(openCodeServer)]);
   }
 });

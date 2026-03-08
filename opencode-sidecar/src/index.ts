@@ -1,11 +1,13 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { verifyHttpMessageSignature } from "./httpSig";
+import { forwardRequestToOpenCode } from "./opencode";
 
 const defaultPort = Number(process.env.PORT) || 3001;
 
 interface SidecarConfig {
   ownerKeyId?: string;
   ownerPublicKeyPem?: string;
+  openCodeBaseUrl?: string;
 }
 
 function hasHttpSignatureHeader(req: IncomingMessage): boolean {
@@ -33,6 +35,7 @@ function toHeaderRecord(req: IncomingMessage): Record<string, string | string[]>
 export function createSidecarServer(config: SidecarConfig = {}) {
   const ownerKeyId = config.ownerKeyId ?? process.env.OWNER_KEY_ID ?? "owner";
   const ownerPublicKeyPem = config.ownerPublicKeyPem ?? process.env.OWNER_PUBLIC_KEY_PEM;
+  const openCodeBaseUrl = config.openCodeBaseUrl ?? process.env.OPENCODE_BASE_URL;
 
   return createServer(async (req, res) => {
     if (req.url === "/health" && req.method === "GET") {
@@ -68,7 +71,18 @@ export function createSidecarServer(config: SidecarConfig = {}) {
         return;
       }
 
-      sendJson(res, 200, { status: "verified", keyId: ownerKeyId });
+      try {
+        await forwardRequestToOpenCode({ req, res, openCodeBaseUrl });
+      } catch (error) {
+        if (res.headersSent) {
+          res.destroy(error instanceof Error ? error : undefined);
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "failed to reach OpenCode";
+        sendJson(res, 502, { error: "upstream unavailable", message });
+      }
+
       return;
     }
 
