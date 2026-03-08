@@ -5,11 +5,13 @@ import { AuthStore } from "./auth/store";
 import { listSupportedModels, resolveModelSelection } from "./llm/modelRegistry";
 import { LlmSecretStore } from "./llm/secretStore";
 import { PodStore } from "./pods/store";
+import { UsageStore } from "./usage/store";
 
 export const createApp = (
   store: PodStore = new PodStore(),
   authStore: AuthStore = new AuthStore(),
-  llmSecretStore: LlmSecretStore = new LlmSecretStore()
+  llmSecretStore: LlmSecretStore = new LlmSecretStore(),
+  usageStore: UsageStore = new UsageStore()
 ) => {
   const app = express();
 
@@ -83,6 +85,45 @@ export const createApp = (
 
   app.get("/api/llm/providers", requireSession, (_req, res: Response<unknown, SessionLocals>) => {
     res.json({ providers: llmSecretStore.listConfiguredProviders() });
+  });
+
+  app.post("/api/usage", requireSession, (req, res: Response<unknown, SessionLocals>) => {
+    const model = typeof req.body?.model === "string" ? req.body.model : "";
+    const promptTokens = req.body?.promptTokens;
+    const completionTokens = req.body?.completionTokens;
+
+    if (!model || !Number.isInteger(promptTokens) || !Number.isInteger(completionTokens)) {
+      res.status(400).json({
+        error: "model, promptTokens, and completionTokens are required"
+      });
+      return;
+    }
+
+    try {
+      const usage = usageStore.create(getSessionAddress(res), {
+        model,
+        promptTokens,
+        completionTokens
+      });
+
+      res.status(201).json(usage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create usage record";
+      if (message === "Unsupported model selection") {
+        res.status(400).json({ error: message, supportedModels: listSupportedModels() });
+        return;
+      }
+
+      res.status(400).json({ error: message });
+    }
+  });
+
+  app.get("/api/usage", requireSession, (_req, res: Response<unknown, SessionLocals>) => {
+    const ownerWallet = getSessionAddress(res);
+    res.json({
+      summary: usageStore.summarize(ownerWallet),
+      records: usageStore.list(ownerWallet)
+    });
   });
 
   app.get("/api/pods/:id", requireSession, (req, res: Response<unknown, SessionLocals>) => {

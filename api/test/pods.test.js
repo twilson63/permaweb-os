@@ -1,17 +1,22 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
-const { join } = require("node:path");
+const { dirname, join } = require("node:path");
 const { tmpdir } = require("node:os");
 const { Wallet } = require("ethers");
 const { createApp } = require("../dist/index.js");
 const { AuthStore } = require("../dist/auth/store.js");
 const { LlmSecretStore } = require("../dist/llm/secretStore.js");
 const { PodStore } = require("../dist/pods/store.js");
+const { UsageStore } = require("../dist/usage/store.js");
 
-const startTestServer = async ({ authStore = new AuthStore(), llmSecretStore = new LlmSecretStore() } = {}) => {
+const startTestServer = async ({
+  authStore = new AuthStore(),
+  llmSecretStore = new LlmSecretStore(),
+  usageStore = new UsageStore()
+} = {}) => {
   const store = new PodStore();
-  const app = createApp(store, authStore, llmSecretStore);
+  const app = createApp(store, authStore, llmSecretStore, usageStore);
 
   return new Promise((resolve) => {
     const server = app.listen(0, () => {
@@ -23,6 +28,17 @@ const startTestServer = async ({ authStore = new AuthStore(), llmSecretStore = n
         close: () => new Promise((done) => server.close(done))
       });
     });
+  });
+};
+
+const createUsage = async (server, session, input) => {
+  return fetch(`${server.baseUrl}/api/usage`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${session.token}`
+    },
+    body: JSON.stringify(input)
   });
 };
 
@@ -445,5 +461,113 @@ test("POST /api/auth/verify rejects invalid signature", async () => {
     assert.equal(payload.error, "Invalid or expired signature challenge");
   } finally {
     await server.close();
+  }
+});
+
+test("POST /api/usage creates a usage record with calculated cost", async () => {
+  const server = await startTestServer();
+
+  try {
+    const { session, wallet } = await createSession(server);
+    const response = await createUsage(server, session, {
+      model: "openai/gpt-4o-mini",
+      promptTokens: 1000,
+      completionTokens: 2000
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.ownerWallet, wallet.address);
+    assert.equal(payload.model, "openai/gpt-4o-mini");
+    assert.equal(payload.promptTokens, 1000);
+    assert.equal(payload.completionTokens, 2000);
+    assert.equal(payload.totalTokens, 3000);
+    assert.equal(payload.costUsd, 0.00135);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/usage aggregates records by wallet", async () => {
+  const server = await startTestServer();
+
+  try {
+    const { session } = await createSession(server);
+    const { session: otherSession } = await createSession(server);
+
+    await createUsage(server, session, {
+      model: "openai/gpt-4o-mini",
+      promptTokens: 1000,
+      completionTokens: 1000
+    });
+    await createUsage(server, session, {
+      model: "openai/gpt-4o-mini",
+      promptTokens: 500,
+      completionTokens: 500
+    });
+    await createUsage(server, otherSession, {
+      model: "openai/gpt-4o-mini",
+      promptTokens: 999,
+      completionTokens: 999
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/usage`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.summary.requestCount, 2);
+    assert.equal(payload.summary.promptTokens, 1500);
+    assert.equal(payload.summary.completionTokens, 1500);
+    assert.equal(payload.summary.totalTokens, 3000);
+    assert.equal(payload.summary.totalCostUsd, 0.001125);
+    assert.equal(payload.records.length, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("usage records persist across UsageStore restarts", async () => {
+  const usagePath = join(mkdtempSync(join(tmpdir(), "web-os-usage-")), "usage-store.json");
+  const usageStore = new UsageStore(usagePath);
+  const server = await startTestServer({ usageStore });
+  let closed = false;
+
+  try {
+    const wallet = Wallet.createRandom();
+    const { session } = await createSession(server, wallet);
+    const created = await createUsage(server, session, {
+      model: "anthropic/claude-3-5-haiku",
+      promptTokens: 1000,
+      completionTokens: 1000
+    });
+
+    assert.equal(created.status, 201);
+    await server.close();
+    closed = true;
+
+    const restartedServer = await startTestServer({ usageStore: new UsageStore(usagePath) });
+    try {
+      const { session: restartedSession } = await createSession(restartedServer, wallet);
+      const response = await fetch(`${restartedServer.baseUrl}/api/usage`, {
+        headers: { authorization: `Bearer ${restartedSession.token}` }
+      });
+
+      assert.equal(response.status, 200);
+      const payload = await response.json();
+      assert.equal(payload.summary.requestCount, 1);
+      assert.equal(payload.summary.totalTokens, 2000);
+      assert.equal(payload.summary.totalCostUsd, 0.0048);
+      assert.equal(payload.records.length, 1);
+      assert.equal(payload.records[0].model, "anthropic/claude-3-5-haiku");
+    } finally {
+      await restartedServer.close();
+    }
+  } finally {
+    if (!closed) {
+      await server.close();
+    }
+    rmSync(dirname(usagePath), { recursive: true, force: true });
   }
 });
