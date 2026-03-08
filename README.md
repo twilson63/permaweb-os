@@ -67,6 +67,27 @@ Detailed setup notes: `docs/local-cluster-bootstrap.md`
 
 Post tasks to `#web-os` with `@opencode` mention.
 
+## GitHub OAuth Setup
+
+Register a GitHub OAuth App before using GitHub integration:
+
+1. Go to GitHub `Settings -> Developer settings -> OAuth Apps -> New OAuth App`
+2. Set `Homepage URL` to your frontend origin (for local dev use `http://127.0.0.1:5173`)
+3. Set `Authorization callback URL` to `http://127.0.0.1:3000/api/auth/github/callback`
+4. Save the generated client ID and client secret as API env vars:
+
+```bash
+export GITHUB_CLIENT_ID=your_github_oauth_app_client_id
+export GITHUB_CLIENT_SECRET=your_github_oauth_app_client_secret
+# optional override (defaults to request host callback path)
+export GITHUB_REDIRECT_URI=http://127.0.0.1:3000/api/auth/github/callback
+```
+
+API endpoints:
+
+- `GET /api/auth/github` (requires session bearer token, redirects to GitHub)
+- `GET /api/auth/github/callback` (exchanges `code`, stores GitHub token in session)
+
 ## Wildcard Ingress for Pod Subdomains
 
 Deploy a pod with service + wildcard ingress:

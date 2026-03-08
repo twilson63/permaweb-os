@@ -21,6 +21,7 @@ export interface SessionIdentity {
 interface StoredSession {
   address: string;
   expiresAtMs: number;
+  githubToken?: string;
 }
 
 export class AuthStore {
@@ -104,6 +105,36 @@ export class AuthStore {
       address: session.address,
       expiresAt: new Date(session.expiresAtMs).toISOString()
     };
+  }
+
+  setGitHubToken(token: string, githubToken: string): boolean {
+    const session = this.sessions.get(token);
+
+    if (!session) {
+      return false;
+    }
+
+    if (session.expiresAtMs <= Date.now()) {
+      this.sessions.delete(token);
+      return false;
+    }
+
+    this.sessions.set(token, {
+      ...session,
+      githubToken: githubToken.trim()
+    });
+
+    return true;
+  }
+
+  getGitHubToken(token: string): string | null {
+    const session = this.sessions.get(token);
+
+    if (!session || session.expiresAtMs <= Date.now()) {
+      return null;
+    }
+
+    return session.githubToken || null;
   }
 
   private createSession(address: string): SessionRecord {

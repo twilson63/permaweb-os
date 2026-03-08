@@ -13,10 +13,11 @@ const { UsageStore } = require("../dist/usage/store.js");
 const startTestServer = async ({
   authStore = new AuthStore(),
   llmSecretStore = new LlmSecretStore(),
-  usageStore = new UsageStore()
+  usageStore = new UsageStore(),
+  appOptions
 } = {}) => {
   const store = new PodStore();
-  const app = createApp(store, authStore, llmSecretStore, usageStore);
+  const app = createApp(store, authStore, llmSecretStore, usageStore, appOptions);
 
   return new Promise((resolve) => {
     const server = app.listen(0, () => {
@@ -29,6 +30,38 @@ const startTestServer = async ({
       });
     });
   });
+};
+
+const withGitHubOAuthEnv = async (fn) => {
+  const prevClientId = process.env.GITHUB_CLIENT_ID;
+  const prevClientSecret = process.env.GITHUB_CLIENT_SECRET;
+  const prevRedirectUri = process.env.GITHUB_REDIRECT_URI;
+
+  process.env.GITHUB_CLIENT_ID = "test-client-id";
+  process.env.GITHUB_CLIENT_SECRET = "test-client-secret";
+  process.env.GITHUB_REDIRECT_URI = "http://127.0.0.1/callback";
+
+  try {
+    await fn();
+  } finally {
+    if (prevClientId === undefined) {
+      delete process.env.GITHUB_CLIENT_ID;
+    } else {
+      process.env.GITHUB_CLIENT_ID = prevClientId;
+    }
+
+    if (prevClientSecret === undefined) {
+      delete process.env.GITHUB_CLIENT_SECRET;
+    } else {
+      process.env.GITHUB_CLIENT_SECRET = prevClientSecret;
+    }
+
+    if (prevRedirectUri === undefined) {
+      delete process.env.GITHUB_REDIRECT_URI;
+    } else {
+      process.env.GITHUB_REDIRECT_URI = prevRedirectUri;
+    }
+  }
 };
 
 const createUsage = async (server, session, input) => {
@@ -570,4 +603,67 @@ test("usage records persist across UsageStore restarts", async () => {
     }
     rmSync(dirname(usagePath), { recursive: true, force: true });
   }
+});
+
+test("GET /api/auth/github redirects to GitHub authorize URL", async () => {
+  await withGitHubOAuthEnv(async () => {
+    const server = await startTestServer();
+
+    try {
+      const { session } = await createSession(server);
+      const response = await fetch(`${server.baseUrl}/api/auth/github`, {
+        headers: { authorization: `Bearer ${session.token}` },
+        redirect: "manual"
+      });
+
+      assert.equal(response.status, 302);
+      const location = response.headers.get("location");
+      assert.equal(typeof location, "string");
+      assert.match(location, /^https:\/\/github\.com\/login\/oauth\/authorize\?/);
+      assert.match(location, /client_id=test-client-id/);
+      assert.match(location, /scope=repo\+read%3Auser/);
+      assert.match(location, /state=/);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+test("GET /api/auth/github/callback stores GitHub token in session", async () => {
+  await withGitHubOAuthEnv(async () => {
+    const authStore = new AuthStore();
+    const server = await startTestServer({
+      authStore,
+      appOptions: {
+        exchangeGitHubCode: async ({ code }) => {
+          assert.equal(code, "oauth-code");
+          return "gho_test_token";
+        }
+      }
+    });
+
+    try {
+      const { session } = await createSession(server);
+      const redirectResponse = await fetch(`${server.baseUrl}/api/auth/github`, {
+        headers: { authorization: `Bearer ${session.token}` },
+        redirect: "manual"
+      });
+
+      assert.equal(redirectResponse.status, 302);
+      const location = redirectResponse.headers.get("location");
+      const state = new URL(location).searchParams.get("state");
+      assert.equal(typeof state, "string");
+
+      const callback = await fetch(
+        `${server.baseUrl}/api/auth/github/callback?code=oauth-code&state=${encodeURIComponent(state)}`
+      );
+
+      assert.equal(callback.status, 200);
+      const payload = await callback.json();
+      assert.equal(payload.connected, true);
+      assert.equal(authStore.getGitHubToken(session.token), "gho_test_token");
+    } finally {
+      await server.close();
+    }
+  });
 });

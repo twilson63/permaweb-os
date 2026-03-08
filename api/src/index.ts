@@ -1,5 +1,11 @@
 import express from "express";
+import { randomBytes } from "crypto";
 import { Response } from "express";
+import {
+  buildGitHubAuthorizeUrl,
+  exchangeGitHubCodeForToken,
+  getGitHubOAuthConfig
+} from "./auth/githubOAuth";
 import { createSessionAuthMiddleware, SessionLocals } from "./auth/middleware";
 import { AuthStore } from "./auth/store";
 import { listSupportedModels, resolveModelSelection } from "./llm/modelRegistry";
@@ -11,9 +17,20 @@ export const createApp = (
   store: PodStore = new PodStore(),
   authStore: AuthStore = new AuthStore(),
   llmSecretStore: LlmSecretStore = new LlmSecretStore(),
-  usageStore: UsageStore = new UsageStore()
+  usageStore: UsageStore = new UsageStore(),
+  {
+    exchangeGitHubCode = exchangeGitHubCodeForToken
+  }: {
+    exchangeGitHubCode?: (input: {
+      clientId: string;
+      clientSecret: string;
+      code: string;
+      redirectUri: string;
+    }) => Promise<string | null>;
+  } = {}
 ) => {
   const app = express();
+  const githubOAuthStates = new Map<string, { sessionToken: string; expiresAtMs: number }>();
 
   app.use(express.json());
 
@@ -57,6 +74,97 @@ export const createApp = (
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to verify signature";
       res.status(400).json({ error: message });
+    }
+  });
+
+  app.get("/api/auth/github", requireSession, (req, res: Response<unknown, SessionLocals>) => {
+    const oauthConfig = getGitHubOAuthConfig();
+
+    if (!oauthConfig) {
+      res.status(500).json({ error: "GitHub OAuth is not configured" });
+      return;
+    }
+
+    const sessionToken = res.locals.session.token;
+    const state = randomBytes(16).toString("base64url");
+    const redirectUri = process.env.GITHUB_REDIRECT_URI?.trim() ||
+      `${req.protocol}://${req.get("host")}/api/auth/github/callback`;
+
+    githubOAuthStates.set(state, {
+      sessionToken,
+      expiresAtMs: Date.now() + 10 * 60 * 1000
+    });
+
+    const authorizeUrl = buildGitHubAuthorizeUrl({
+      clientId: oauthConfig.clientId,
+      redirectUri,
+      state
+    });
+
+    res.redirect(authorizeUrl);
+  });
+
+  app.get("/api/auth/github/callback", async (req, res) => {
+    const oauthConfig = getGitHubOAuthConfig();
+
+    if (!oauthConfig) {
+      res.status(500).json({ error: "GitHub OAuth is not configured" });
+      return;
+    }
+
+    const error = typeof req.query.error === "string" ? req.query.error : "";
+
+    if (error) {
+      const description =
+        typeof req.query.error_description === "string"
+          ? req.query.error_description
+          : "GitHub authorization failed";
+      res.status(400).json({ error: description });
+      return;
+    }
+
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+
+    if (!code || !state) {
+      res.status(400).json({ error: "Missing GitHub OAuth code or state" });
+      return;
+    }
+
+    const stateRecord = githubOAuthStates.get(state);
+    githubOAuthStates.delete(state);
+
+    if (!stateRecord || stateRecord.expiresAtMs <= Date.now()) {
+      res.status(401).json({ error: "Invalid or expired GitHub OAuth state" });
+      return;
+    }
+
+    const redirectUri = process.env.GITHUB_REDIRECT_URI?.trim() ||
+      `${req.protocol}://${req.get("host")}/api/auth/github/callback`;
+
+    try {
+      const githubToken = await exchangeGitHubCode({
+        clientId: oauthConfig.clientId,
+        clientSecret: oauthConfig.clientSecret,
+        code,
+        redirectUri
+      });
+
+      if (!githubToken) {
+        res.status(401).json({ error: "GitHub token exchange failed" });
+        return;
+      }
+
+      const stored = authStore.setGitHubToken(stateRecord.sessionToken, githubToken);
+
+      if (!stored) {
+        res.status(401).json({ error: "Session expired" });
+        return;
+      }
+
+      res.json({ connected: true });
+    } catch (_error) {
+      res.status(500).json({ error: "Failed to complete GitHub OAuth flow" });
     }
   });
 
