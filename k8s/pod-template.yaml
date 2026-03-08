@@ -17,8 +17,9 @@ spec:
   volumes:
     - name: home-opencode
       emptyDir: {}
-    - name: secrets
-      emptyDir: {}
+    - name: llm-secrets
+      secret:
+        secretName: llm-api-keys
   containers:
     - name: opencode
       image: docker.io/library/web-os-opencode:latest
@@ -29,8 +30,8 @@ spec:
       volumeMounts:
         - name: home-opencode
           mountPath: /home/opencode
-        - name: secrets
-          mountPath: /secrets
+        - name: llm-secrets
+          mountPath: /secrets/llm
           readOnly: true
       securityContext:
         runAsUser: 1000
@@ -74,10 +75,6 @@ spec:
             MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAKfSxv2f8A4QpDUS8V4nX5xv2wJfQv1n
             bY1q4mN8Twd0FfA8t8W1Ih4kN3f+8SgXj7vK2d8Qy7Q8m7P2mM8N6DECAwEAAQ==
             -----END PUBLIC KEY-----
-      volumeMounts:
-        - name: secrets
-          mountPath: /secrets
-          readOnly: true
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000

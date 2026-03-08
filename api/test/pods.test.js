@@ -1,13 +1,17 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const { tmpdir } = require("node:os");
 const { Wallet } = require("ethers");
 const { createApp } = require("../dist/index.js");
 const { AuthStore } = require("../dist/auth/store.js");
+const { LlmSecretStore } = require("../dist/llm/secretStore.js");
 const { PodStore } = require("../dist/pods/store.js");
 
-const startTestServer = async ({ authStore = new AuthStore() } = {}) => {
+const startTestServer = async ({ authStore = new AuthStore(), llmSecretStore = new LlmSecretStore() } = {}) => {
   const store = new PodStore();
-  const app = createApp(store, authStore);
+  const app = createApp(store, authStore, llmSecretStore);
 
   return new Promise((resolve) => {
     const server = app.listen(0, () => {
@@ -315,6 +319,32 @@ test("GET /api/pods returns 401 after session expiry", async () => {
     assert.equal(payload.error, "Unauthorized");
   } finally {
     await server.close();
+  }
+});
+
+test("GET /api/llm/providers returns configured providers without key values", async () => {
+  const secretsDir = mkdtempSync(join(tmpdir(), "web-os-llm-secrets-"));
+  writeFileSync(join(secretsDir, "openai"), "sk-test-openai\n", "utf-8");
+  writeFileSync(join(secretsDir, "anthropic"), "sk-ant-test\n", "utf-8");
+
+  const server = await startTestServer({ llmSecretStore: new LlmSecretStore(secretsDir) });
+
+  try {
+    const { session } = await createSession(server);
+    const response = await fetch(`${server.baseUrl}/api/llm/providers`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
+
+    assert.equal(response.status, 200);
+    const raw = await response.text();
+    assert.equal(raw.includes("sk-test-openai"), false);
+    assert.equal(raw.includes("sk-ant-test"), false);
+
+    const payload = JSON.parse(raw);
+    assert.deepEqual(payload.providers, ["anthropic", "openai"]);
+  } finally {
+    await server.close();
+    rmSync(secretsDir, { recursive: true, force: true });
   }
 });
 

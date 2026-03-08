@@ -8,6 +8,7 @@ NAMESPACE="${K8S_NAMESPACE:-${WEB_OS_NAMESPACE:-web-os}}"
 POD_NAME="${WEB_OS_POD_NAME:-user-pod}"
 POD_MANIFEST="${ROOT_DIR}/k8s/pod-template.yaml"
 SERVICE_MANIFEST="${ROOT_DIR}/k8s/pod-service.yaml"
+LLM_SECRET_MANIFEST="${ROOT_DIR}/k8s/llm-api-keys.secret.yaml"
 INGRESS_TEMPLATE="${ROOT_DIR}/k8s/pod-ingress.template.yaml"
 NAMESPACE_MANIFEST="${ROOT_DIR}/k8s/namespace.yaml"
 OPENCODE_IMAGE="${OPENCODE_IMAGE:-web-os/opencode-base:latest}"
@@ -70,6 +71,11 @@ if [[ ! -f "${SERVICE_MANIFEST}" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${LLM_SECRET_MANIFEST}" ]]; then
+  echo "error: missing LLM secret manifest: ${LLM_SECRET_MANIFEST}" >&2
+  exit 1
+fi
+
 if [[ ! -f "${INGRESS_TEMPLATE}" ]]; then
   echo "error: missing ingress template: ${INGRESS_TEMPLATE}" >&2
   exit 1
@@ -83,6 +89,9 @@ else
 fi
 
 ensure_kind_images
+
+echo "==> Applying LLM API key secret"
+kubectl apply -f "${LLM_SECRET_MANIFEST}" >/dev/null
 
 echo "==> Deploying pod manifest"
 kubectl apply -f "${POD_MANIFEST}"

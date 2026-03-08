@@ -72,6 +72,10 @@ Post tasks to `#web-os` with `@opencode` mention.
 Deploy a pod with service + wildcard ingress:
 
 ```bash
+# set your real provider keys before first deploy
+cp k8s/llm-api-keys.secret.yaml /tmp/llm-api-keys.secret.yaml
+# edit /tmp/llm-api-keys.secret.yaml and replace placeholder values
+
 POD_BASE_DOMAIN=127.0.0.1.nip.io ./scripts/deploy-pod.sh
 ```
 
@@ -85,3 +89,4 @@ Notes:
 
 - `POD_BASE_DOMAIN` controls wildcard host matching (`*.${POD_BASE_DOMAIN}`)
 - Default domain is `127.0.0.1.nip.io`, which supports wildcard DNS locally
+- LLM keys are mounted to `/secrets/llm/` and never returned by API responses

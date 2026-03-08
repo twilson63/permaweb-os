@@ -17,6 +17,10 @@ spec:
         app.kubernetes.io/name: web-os-api
         app.kubernetes.io/part-of: web-os
     spec:
+      volumes:
+        - name: llm-secrets
+          secret:
+            secretName: llm-api-keys
       containers:
         - name: api
           image: docker.io/library/web-os-api:latest
@@ -27,6 +31,12 @@ spec:
           env:
             - name: PORT
               value: "3000"
+            - name: LLM_SECRETS_DIR
+              value: /secrets/llm
+          volumeMounts:
+            - name: llm-secrets
+              mountPath: /secrets/llm
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /health

@@ -2,9 +2,14 @@ import express from "express";
 import { Response } from "express";
 import { createSessionAuthMiddleware, SessionLocals } from "./auth/middleware";
 import { AuthStore } from "./auth/store";
+import { LlmSecretStore } from "./llm/secretStore";
 import { PodStore } from "./pods/store";
 
-export const createApp = (store: PodStore = new PodStore(), authStore: AuthStore = new AuthStore()) => {
+export const createApp = (
+  store: PodStore = new PodStore(),
+  authStore: AuthStore = new AuthStore(),
+  llmSecretStore: LlmSecretStore = new LlmSecretStore()
+) => {
   const app = express();
 
   app.use(express.json());
@@ -63,6 +68,10 @@ export const createApp = (store: PodStore = new PodStore(), authStore: AuthStore
 
   app.get("/api/pods", requireSession, (_req, res: Response<unknown, SessionLocals>) => {
     res.json({ pods: store.list(getSessionAddress(res)) });
+  });
+
+  app.get("/api/llm/providers", requireSession, (_req, res: Response<unknown, SessionLocals>) => {
+    res.json({ providers: llmSecretStore.listConfiguredProviders() });
   });
 
   app.get("/api/pods/:id", requireSession, (req, res: Response<unknown, SessionLocals>) => {
