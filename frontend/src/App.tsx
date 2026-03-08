@@ -17,6 +17,13 @@ interface WindowWithEthereum extends Window {
   ethereum?: EthereumProvider;
 }
 
+const SUPPORTED_MODELS = [
+  "openai/gpt-4.1-mini",
+  "openai/gpt-4o-mini",
+  "anthropic/claude-3-5-haiku",
+  "anthropic/claude-3-7-sonnet"
+];
+
 const formatDate = (value: string): string => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
@@ -28,6 +35,8 @@ const App = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(SUPPORTED_MODELS[0]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(initialSession?.address ?? null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(initialSession?.expiresAt ?? null);
@@ -83,8 +92,9 @@ const App = () => {
     setError(null);
 
     try {
-      const newPod = await createPod();
+      const newPod = await createPod({ model: selectedModel });
       setPods((currentPods) => [newPod, ...currentPods]);
+      setCreateDialogOpen(false);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Failed to create pod";
       setError(message);
@@ -168,11 +178,42 @@ const App = () => {
           <button type="button" onClick={() => void refreshPods()} disabled={loading}>
             Refresh
           </button>
-          <button type="button" className="primary" onClick={() => void onCreate()} disabled={creating}>
-            {creating ? "Creating..." : "Create Pod"}
+          <button type="button" className="primary" onClick={() => setCreateDialogOpen(true)} disabled={creating}>
+            Create Pod
           </button>
         </div>
       </header>
+
+      {createDialogOpen ? (
+        <div className="dialog-backdrop" role="presentation" onClick={() => setCreateDialogOpen(false)}>
+          <section
+            aria-label="Create pod"
+            className="create-dialog"
+            role="dialog"
+            aria-modal="true"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Create Pod</h2>
+            <p>Choose the language model for this pod.</p>
+            <label htmlFor="model">Model</label>
+            <select id="model" value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+              {SUPPORTED_MODELS.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setCreateDialogOpen(false)} disabled={creating}>
+                Cancel
+              </button>
+              <button type="button" className="primary" onClick={() => void onCreate()} disabled={creating}>
+                {creating ? "Creating..." : "Create"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {error ? <p className="error">{error}</p> : null}
 
@@ -184,7 +225,10 @@ const App = () => {
         <section className="pod-grid" aria-label="Pod list">
           {pods.map((pod) => (
             <article className="pod-card" key={pod.id}>
-              <h2>{pod.name}</h2>
+              <div className="pod-card-header">
+                <h2>{pod.name}</h2>
+                {pod.llm?.provider ? <span className="provider-badge">{pod.llm.provider}</span> : null}
+              </div>
               <dl>
                 <div>
                   <dt>ID</dt>
@@ -197,6 +241,10 @@ const App = () => {
                 <div>
                   <dt>Subdomain</dt>
                   <dd>{pod.subdomain}</dd>
+                </div>
+                <div>
+                  <dt>Model</dt>
+                  <dd>{pod.llm?.model ?? "-"}</dd>
                 </div>
                 <div>
                   <dt>Created</dt>

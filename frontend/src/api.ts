@@ -7,6 +7,15 @@ export interface Pod {
   status: string;
   subdomain: string;
   createdAt: string;
+  llm?: {
+    model: string;
+    provider: string;
+    keyPath: string;
+  };
+}
+
+export interface CreatePodInput {
+  model?: string;
 }
 
 export interface WalletAuthChallenge {
@@ -164,14 +173,14 @@ export const listPods = async (): Promise<Pod[]> => {
   return payload.pods;
 };
 
-export const createPod = async (): Promise<Pod> => {
+export const createPod = async (input: CreatePodInput = {}): Promise<Pod> => {
   const response = await fetch("/api/pods", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders()
     },
-    body: JSON.stringify({})
+    body: JSON.stringify(input)
   });
 
   if (!response.ok) {

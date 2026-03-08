@@ -45,6 +45,58 @@ body {
   gap: 0.5rem;
 }
 
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 20, 33, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.create-dialog {
+  width: min(440px, 100%);
+  background: #ffffff;
+  border: 1px solid #d5dce4;
+  border-radius: 14px;
+  padding: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.create-dialog h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.create-dialog p {
+  margin: 0;
+  color: #55606d;
+}
+
+.create-dialog label {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.create-dialog select {
+  border: 1px solid #c4cdd6;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1b1f24;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.7rem;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
 button {
   border: 1px solid #c4cdd6;
   border-radius: 10px;
@@ -106,6 +158,25 @@ button.danger {
 .pod-card h2 {
   margin: 0;
   font-size: 1.15rem;
+}
+
+.pod-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.provider-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  background: #eef4ff;
+  color: #1743a3;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .pod-card dl {
