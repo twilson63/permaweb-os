@@ -54,7 +54,7 @@ function createSignedRequest(input: {
     url: "/verify",
     protocol: "http",
     headers: {
-      host: "pod.web-os.live",
+      host: "pod.permaweb.live",
       date: "Sat, 07 Mar 2026 12:00:00 GMT",
     },
   };
@@ -165,7 +165,7 @@ test("accepts valid Ethereum personal_sign HTTP message signature", async () => 
     url: "/verify",
     protocol: "http",
     headers: {
-      host: "pod.web-os.live",
+      host: "pod.permaweb.live",
       date: "Sat, 07 Mar 2026 12:00:00 GMT",
     },
   };
@@ -204,7 +204,7 @@ test("rejects Ethereum personal_sign signature for different key id", async () =
     url: "/verify",
     protocol: "http",
     headers: {
-      host: "pod.web-os.live",
+      host: "pod.permaweb.live",
       date: "Sat, 07 Mar 2026 12:00:00 GMT",
     },
   };

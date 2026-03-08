@@ -71,7 +71,7 @@ test("pod integration: signed /verify request runs OpenCode and returns JSONL", 
 
   const sidecarServer = createSidecarServer({
     ownerKeyId,
-    openCodeModel: "openai/gpt-4o-mini", // Use a fast model
+    // Use default model (no model specified)
   });
   const sidecarPort = await listen(sidecarServer);
 
@@ -120,6 +120,7 @@ test("pod integration: signed /verify request runs OpenCode and returns JSONL", 
     
     assert.ok(types.includes("step_start"), "Expected step_start in response");
     assert.ok(types.includes("step_finish"), "Expected step_finish in response");
+    assert.ok(types.includes("text"), "Expected text in response");
   } finally {
     await close(sidecarServer);
   }

@@ -2,7 +2,7 @@
 
 ## Overview
 
-**web-os.live** - A platform where users connect with their wallet (Arweave or other), launch a personal OpenCode pod, and interact via signed JSON messages. Each pod is a developer environment with OpenCode as the agent harness.
+**permaweb.live** - A platform where users connect with their wallet (Arweave or other), launch a personal OpenCode pod, and interact via signed JSON messages. Each pod is a developer environment with OpenCode as the agent harness.
 
 ## Core Concept
 
@@ -18,19 +18,19 @@ User Wallet → Gateway → Pod (OpenCode + Dev Tools) → Response Stream
 
 ## Architecture
 
-Each pod gets its own subdomain: `{pod-id}.web-os.live`
+Each pod gets its own subdomain: `{pod-id}.permaweb.live`
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           web-os.live                                   │
+│                           permaweb.live                                   │
 │                      (Kubernetes Cluster)                               │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                    Ingress / DNS                                 │   │
-│  │   *.web-os.live → pod subdomains                                 │   │
-│  │   abc123.web-os.live → Pod abc123                                 │   │
-│  │   xyz789.web-os.live → Pod xyz789                                 │   │
+│  │   *.permaweb.live → pod subdomains                                 │   │
+│  │   abc123.permaweb.live → Pod abc123                                 │   │
+│  │   xyz789.permaweb.live → Pod xyz789                                 │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                    │                                    │
 │                         Subdomain Routing                               │
@@ -39,7 +39,7 @@ Each pod gets its own subdomain: `{pod-id}.web-os.live`
 │  │   Pod 1    │  │   Pod 2    │  │   Pod 3    │  │   Pod N    │        │
 │  │            │  │            │  │            │  │            │        │
 │  │ abc123.    │  │ xyz789.    │  │ def456.    │  │ pod-id.    │        │
-│  │ web-os.live│  │ web-os.live│  │ web-os.live│  │ web-os.live│        │
+│  │ permaweb.live│  │ permaweb.live│  │ permaweb.live│  │ permaweb.live│        │
 │  │            │  │            │  │            │  │            │        │
 │  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │        │
 │  │ │HTTPSig │ │  │ │HTTPSig │ │  │ │HTTPSig │ │  │ │HTTPSig │ │        │
@@ -61,8 +61,8 @@ Each pod gets its own subdomain: `{pod-id}.web-os.live`
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                    Gateway Service (Management API)              │   │
 │  │   - Wallet authentication (Arweave, RSA, ECDSA)                  │   │
-│  │   - Pod lifecycle (create/delete/status) via api.web-os.live     │   │
-│  │   - Subdomain provisioning (pod-id.web-os.live)                  │   │
+│  │   - Pod lifecycle (create/delete/status) via api.permaweb.live     │   │
+│  │   - Subdomain provisioning (pod-id.permaweb.live)                  │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
@@ -83,10 +83,10 @@ Each pod gets its own subdomain: `{pod-id}.web-os.live`
 ### Subdomain Flow
 
 ```
-1. User authenticates at api.web-os.live with wallet signature
-2. Gateway creates pod, assigns subdomain: abc123.web-os.live
-3. DNS/Ingress routes abc123.web-os.live → Pod abc123
-4. User sends signed JSON to abc123.web-os.live
+1. User authenticates at api.permaweb.live with wallet signature
+2. Gateway creates pod, assigns subdomain: abc123.permaweb.live
+3. DNS/Ingress routes abc123.permaweb.live → Pod abc123
+4. User sends signed JSON to abc123.permaweb.live
 5. Pod's HTTPSig layer verifies signature from owner wallet
 6. OpenCode processes, streams JSONL response
 ```
@@ -181,7 +181,7 @@ Each pod gets its own subdomain: `{pod-id}.web-os.live`
 - [ ] Model selection UI
 
 ### Phase 5: Production
-- [ ] DNS setup (web-os.live)
+- [ ] DNS setup (permaweb.live)
 - [ ] TLS certificates
 - [ ] Monitoring & logging
 - [ ] Rate limiting & quotas

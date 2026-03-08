@@ -20,7 +20,7 @@ This roadmap expands `PLAN.md` into execution-ready steps with explicit dependen
 - **ADR-003 Developer Agent Image**: pod image includes OpenCode plus standard developer tools/languages.
 - **ADR-004 Per-Pod HTTPSig Verification**: each pod enforces owner-only HTTPSig verification.
 - **ADR-005 Secret Mount Pattern**: LLM keys are mounted as files at `/secrets/llm/`, never returned by API.
-- **ADR-006 Per-Pod Subdomain Routing**: each pod is directly addressable at `{pod-id}.web-os.live`; gateway handles lifecycle only.
+- **ADR-006 Per-Pod Subdomain Routing**: each pod is directly addressable at `{pod-id}.permaweb.live`; gateway handles lifecycle only.
 
 ## Phase 0 - Foundation
 
@@ -75,21 +75,21 @@ This roadmap expands `PLAN.md` into execution-ready steps with explicit dependen
 - **Estimated Effort**: 1-1.5 days.
 
 ### P1-S3: Pod Lifecycle API (create/delete/status)
-- **Description**: Build endpoints for pod create, delete, list, and status; include ownership labels, idempotency handling, and deterministic subdomain assignment (`{pod-id}.web-os.live`) derived from wallet-hash pod identity.
+- **Description**: Build endpoints for pod create, delete, list, and status; include ownership labels, idempotency handling, and deterministic subdomain assignment (`{pod-id}.permaweb.live`) derived from wallet-hash pod identity.
 - **Dependencies**: P1-S2.
 - **Success Criteria**: API tests and manual checks show pods can be created, inspected, and removed reliably, and each pod response includes its assigned subdomain.
 - **Estimated Effort**: 2-3 days.
 
 ### P1-S4: Wildcard DNS Configuration
-- **Description**: Configure wildcard DNS for pod addressing (`*.web-os.live`) plus explicit gateway host (`api.web-os.live`) for management API.
+- **Description**: Configure wildcard DNS for pod addressing (`*.permaweb.live`) plus explicit gateway host (`api.permaweb.live`) for management API.
 - **Dependencies**: P1-S3.
-- **Success Criteria**: DNS records resolve correctly for both wildcard pod hosts and `api.web-os.live` in target environment(s).
+- **Success Criteria**: DNS records resolve correctly for both wildcard pod hosts and `api.permaweb.live` in target environment(s).
 - **Estimated Effort**: 0.5-1 day.
 
 ### P1-S5: Ingress Subdomain Routing
-- **Description**: Implement ingress host-based routing rules (Traefik/NGINX) to route `{pod-id}.web-os.live` directly to pod services while routing `api.web-os.live` to gateway.
+- **Description**: Implement ingress host-based routing rules (Traefik/NGINX) to route `{pod-id}.permaweb.live` directly to pod services while routing `api.permaweb.live` to gateway.
 - **Dependencies**: P1-S3, P1-S4.
-- **Success Criteria**: Signed requests sent to pod subdomains reach the correct pod without gateway proxying; management calls remain on `api.web-os.live`.
+- **Success Criteria**: Signed requests sent to pod subdomains reach the correct pod without gateway proxying; management calls remain on `api.permaweb.live`.
 - **Estimated Effort**: 1-1.5 days.
 
 ### P1-S6: Basic Frontend Pod Console
@@ -208,10 +208,10 @@ This roadmap expands `PLAN.md` into execution-ready steps with explicit dependen
 - **Success Criteria**: One-command or pipeline-based promotion from staging to production is documented and reproducible.
 - **Estimated Effort**: 2 days.
 
-### P5-S2: DNS and Ingress for web-os.live
+### P5-S2: DNS and Ingress for permaweb.live
 - **Description**: Configure DNS records, ingress rules, and host routing for API/frontend domains.
 - **Dependencies**: P5-S1.
-- **Success Criteria**: `web-os.live` resolves to production ingress and routes traffic correctly.
+- **Success Criteria**: `permaweb.live` resolves to production ingress and routes traffic correctly.
 - **Estimated Effort**: 1 day.
 
 ### P5-S3: TLS Automation

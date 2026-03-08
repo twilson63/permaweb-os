@@ -5,7 +5,7 @@ This guide walks you through deploying Web OS to DigitalOcean Kubernetes (DOKS).
 ## Prerequisites
 
 - DigitalOcean account
-- Domain name (e.g., `web-os.live`)
+- Domain name (e.g., `permaweb.live`)
 - `doctl` CLI installed
 - `kubectl` installed
 - Docker installed locally
@@ -76,10 +76,10 @@ api                  A      157.230.100.100
 *.pods               A      157.230.100.100
 
 # Or use DigitalOcean DNS
-doctl compute domain create web-os.live
-doctl compute domain records create web-os.live --record-type A --record-name "@" --record-data 157.230.100.100
-doctl compute domain records create web-os.live --record-type A --record-name "api" --record-data 157.230.100.100
-doctl compute domain records create web-os.live --record-type A --record-name "*.pods" --record-data 157.230.100.100
+doctl compute domain create permaweb.live
+doctl compute domain records create permaweb.live --record-type A --record-name "@" --record-data 157.230.100.100
+doctl compute domain records create permaweb.live --record-type A --record-name "api" --record-data 157.230.100.100
+doctl compute domain records create permaweb.live --record-type A --record-name "*.pods" --record-data 157.230.100.100
 ```
 
 ## 5. Install Cert-Manager (TLS)
@@ -401,13 +401,13 @@ metadata:
 spec:
   tls:
   - hosts:
-    - web-os.live
-    - api.web-os.live
-    - "*.pods.web-os.live"
+    - permaweb.live
+    - api.permaweb.live
+    - "*.pods.permaweb.live"
     secretName: web-os-tls
   rules:
   # Main site
-  - host: web-os.live
+  - host: permaweb.live
     http:
       paths:
       - path: /
@@ -418,7 +418,7 @@ spec:
             port:
               number: 80
   # API
-  - host: api.web-os.live
+  - host: api.permaweb.live
     http:
       paths:
       - path: /
@@ -429,7 +429,7 @@ spec:
             port:
               number: 80
   # User pods (wildcard)
-  - host: "*.pods.web-os.live"
+  - host: "*.pods.permaweb.live"
     http:
       paths:
       - path: /
@@ -461,10 +461,10 @@ kubectl get ingress -n web-os
 kubectl get certificate -n web-os
 
 # Test API health
-curl https://api.web-os.live/health
+curl https://api.permaweb.live/health
 
 # Test frontend
-curl https://web-os.live/
+curl https://permaweb.live/
 ```
 
 ## 12. Configure Auto-Scaling
@@ -602,8 +602,8 @@ kubectl logs -n cert-manager -l app=cert-manager
 
 ```bash
 # Check DNS propagation
-dig web-os.live
-dig api.web-os.live
+dig permaweb.live
+dig api.permaweb.live
 
 # Check load balancer
 doctl compute load-balancer list

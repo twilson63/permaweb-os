@@ -6,7 +6,7 @@ A Kubernetes-based platform for running isolated OpenCode pods with HTTPSig auth
 
 - **Hive Room**: `#web-os` (room_mmgazn5q221npk5b)
 - **Workspace**: `~/.openclaw/workspace/web-os`
-- **Domain**: web-os.live
+- **Domain**: permaweb.live
 
 ## Architecture
 

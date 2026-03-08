@@ -21,7 +21,7 @@ Developers want AI-powered development environments that they own and control. C
 - **Dev Tools** - git, curl, brew, Node.js, Python, Rust, Go
 - **HTTPSig Sidecar** - Verifies every request is signed by the owner's wallet
 
-Each pod has its own subdomain: `{pod-id}.web-os.live`
+Each pod has its own subdomain: `{pod-id}.permaweb.live`
 
 Users interact by signing JSON messages with their wallet. The HTTPSig sidecar verifies the signature and only allows requests from the owner's wallet. OpenCode processes the request and streams JSONL responses.
 
@@ -44,7 +44,7 @@ Think of each pod as a personal development server in the cloud. But unlike a tr
 3. **You don't share it** - One wallet, one pod
 4. **You can't exfiltrate from it** - Secrets are mounted, not accessible
 
-The gateway (`api.web-os.live`) handles pod lifecycle (create, delete, status). But all pod interactions go directly to the pod's subdomain, bypassing the gateway. This is intentional - the gateway should never see request payloads.
+The gateway (`api.permaweb.live`) handles pod lifecycle (create, delete, status). But all pod interactions go directly to the pod's subdomain, bypassing the gateway. This is intentional - the gateway should never see request payloads.
 
 ### Core Flow
 
@@ -57,14 +57,14 @@ The gateway (`api.web-os.live`) handles pod lifecycle (create, delete, status). 
 │      ┌────────────────────────────────────────────────────────────────┐     │
 │      │  User clicks "Connect Wallet"                                  │     │
 │      │  Frontend requests signature of challenge                       │     │
-│      │  Wallet signs: "I am requesting a pod on web-os.live"          │     │
+│      │  Wallet signs: "I am requesting a pod on permaweb.live"          │     │
 │      │  Gateway verifies signature, creates pod                        │     │
-│      │  Returns: { podId: "abc123", subdomain: "abc123.web-os.live" } │     │
+│      │  Returns: { podId: "abc123", subdomain: "abc123.permaweb.live" } │     │
 │      └────────────────────────────────────────────────────────────────┘     │
 │                                                                              │
 │   2. INTERACT WITH POD                                                       │
 │      ┌────────────────────────────────────────────────────────────────┐     │
-│      │  User sends request to abc123.web-os.live                      │     │
+│      │  User sends request to abc123.permaweb.live                      │     │
 │      │  Request: { method: "message", content: "Create hello.ts" }   │     │
 │      │  Headers: Signature: keyId="owner", ...                        │     │
 │      │                                                                 │     │
@@ -118,19 +118,19 @@ The sidecar verifies:
 
 ### Subdomain Routing
 
-Each pod gets its own subdomain: `{pod-id}.web-os.live`
+Each pod gets its own subdomain: `{pod-id}.permaweb.live`
 
 ```
-api.web-os.live          → Gateway (pod lifecycle)
-abc123.web-os.live       → Pod abc123 (direct access)
-xyz789.web-os.live       → Pod xyz789 (direct access)
+api.permaweb.live          → Gateway (pod lifecycle)
+abc123.permaweb.live       → Pod abc123 (direct access)
+xyz789.permaweb.live       → Pod xyz789 (direct access)
 ```
 
-Why subdomains instead of path-based routing (`web-os.live/pod/abc123`)?
+Why subdomains instead of path-based routing (`permaweb.live/pod/abc123`)?
 
 1. **Direct access** - No gateway in the path means lower latency
 2. **Isolation** - Each pod is independently addressable
-3. **SSL** - Wildcard cert for `*.web-os.live` covers all pods
+3. **SSL** - Wildcard cert for `*.permaweb.live` covers all pods
 4. **DNS** - Can route pods to different regions/clusters
 
 The gateway only handles:
@@ -246,7 +246,7 @@ CMD ["opencode", "run"]
 │            │                                                                  │
 │            ▼                                                                  │
 │   ┌──────────────────┐                                                        │
-│   │  Pod Subdomain    │  ← {pod-id}.web-os.live                               │
+│   │  Pod Subdomain    │  ← {pod-id}.permaweb.live                               │
 │   │                   │  ← Direct access, no gateway                          │
 │   └──────────────────┘                                                        │
 │            │                                                                  │
@@ -343,7 +343,7 @@ OpenCode reads from `/secrets/llm/anthropic`, `/secrets/llm/openai`, etc. The us
 - Clone/edit/push workflow
 
 **Phase 5: Production**
-- DNS (`web-os.live`)
+- DNS (`permaweb.live`)
 - TLS certificates
 - Monitoring/logging
 - Rate limiting
@@ -387,7 +387,7 @@ Each developer gets their own isolated environment. If one pod is compromised, o
 
 ### Multi-Region Deployment
 
-Pods can be scheduled in different regions. The gateway can route `{pod-id}.web-os.live` to the nearest cluster. This requires:
+Pods can be scheduled in different regions. The gateway can route `{pod-id}.permaweb.live` to the nearest cluster. This requires:
 - Global DNS (Route 53, Cloudflare)
 - Inter-cluster pod replication
 - State synchronization

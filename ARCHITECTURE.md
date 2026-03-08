@@ -4,7 +4,7 @@
 
 **Web OS** is a Kubernetes-based platform where each user connects with their wallet (Arweave/RSA/ECDSA), spawns a personal OpenCode pod, and interacts via HTTPSig-signed JSON requests. Each pod runs a developer agent image with git, curl, brew, and standard development tools.
 
-**Domain**: web-os.live
+**Domain**: permaweb.live
 
 ---
 
@@ -12,14 +12,14 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           web-os.live                                   │
+│                           permaweb.live                                   │
 │                      (Kubernetes Cluster)                               │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                    Ingress / DNS                                 │   │
-│  │   *.web-os.live → Pod subdomains                                 │   │
-│  │   api.web-os.live → Gateway (management API)                     │   │
+│  │   *.permaweb.live → Pod subdomains                                 │   │
+│  │   api.permaweb.live → Gateway (management API)                     │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                    │                                    │
 │                         Subdomain Routing                               │
@@ -28,7 +28,7 @@
 │  │   Pod 1    │  │   Pod 2    │  │   Pod 3    │  │   Pod N    │        │
 │  │            │  │            │  │            │  │            │        │
 │  │ abc123.    │  │ xyz789.    │  │ def456.    │  │ pod-id.    │        │
-│  │ web-os.live│  │ web-os.live│  │ web-os.live│  │ web-os.live│        │
+│  │ permaweb.live│  │ permaweb.live│  │ permaweb.live│  │ permaweb.live│        │
 │  │            │  │            │  │            │  │            │        │
 │  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │        │
 │  │ │HTTPSig │ │  │ │HTTPSig │ │  │ │HTTPSig │ │  │ │HTTPSig │ │        │
@@ -50,8 +50,8 @@
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                    Gateway Service                               │   │
 │  │   - Wallet authentication (Arweave, RSA, ECDSA)                  │   │
-│  │   - Pod lifecycle (create/delete/status) via api.web-os.live     │   │
-│  │   - Subdomain provisioning (pod-id.web-os.live)                  │   │
+│  │   - Pod lifecycle (create/delete/status) via api.permaweb.live     │   │
+│  │   - Subdomain provisioning (pod-id.permaweb.live)                  │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
@@ -189,21 +189,21 @@
 
 **Context**: Users need direct access to their pod's API without going through a central gateway for every request.
 
-**Decision**: Each pod gets its own subdomain: `{pod-id}.web-os.live`
+**Decision**: Each pod gets its own subdomain: `{pod-id}.permaweb.live`
 - Pod ID is derived from wallet address (e.g., first 8 chars of address hash)
 - DNS/Ingress routes subdomain to specific pod
-- Gateway service only handles pod lifecycle (create/delete) at `api.web-os.live`
+- Gateway service only handles pod lifecycle (create/delete) at `api.permaweb.live`
 
 **Consequences**:
 - Direct pod access for lower latency
 - Gateway doesn't need to proxy every request
 - Each pod is independently addressable
-- Simple SSL cert management with wildcard cert for `*.web-os.live`
+- Simple SSL cert management with wildcard cert for `*.permaweb.live`
 - Clear separation: management API vs pod API
 
 **Example**:
-- Wallet `ABC...XYZ` → Pod ID `abc123` → Subdomain `abc123.web-os.live`
-- User sends signed request directly to `abc123.web-os.live`
+- Wallet `ABC...XYZ` → Pod ID `abc123` → Subdomain `abc123.permaweb.live`
+- User sends signed request directly to `abc123.permaweb.live`
 - Pod's HTTPSig layer verifies the signature
 
 ---
@@ -425,16 +425,16 @@ spec:
 │                         REQUEST FLOW                                    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  1. User authenticates at api.web-os.live                             │
+│  1. User authenticates at api.permaweb.live                             │
 │     └── Wallet signature → Gateway creates pod                         │
-│     └── Pod ID: abc123 → Subdomain: abc123.web-os.live                │
+│     └── Pod ID: abc123 → Subdomain: abc123.permaweb.live                │
 │                                                                         │
-│  2. User sends signed JSON to abc123.web-os.live                      │
+│  2. User sends signed JSON to abc123.permaweb.live                      │
 │     └── Request: { "id": "req_1", "method": "message", ... }          │
 │     └── Headers: Signature: keyId="owner", ...                         │
 │                                                                         │
 │  3. Ingress routes to pod's HTTPSig sidecar                           │
-│     └── *.web-os.live → user-pod service                               │
+│     └── *.permaweb.live → user-pod service                               │
 │                                                                         │
 │  4. HTTPSig sidecar verifies signature                                 │
 │     └── Extract keyId from signature                                   │
@@ -544,7 +544,7 @@ const signature = await wallet.sign(JSON.stringify(request));
 - Clone/edit/push workflow
 
 ### Phase 5: Production (8-12 days)
-- DNS (web-os.live)
+- DNS (permaweb.live)
 - TLS certificates
 - Monitoring/logging
 - Rate limiting
