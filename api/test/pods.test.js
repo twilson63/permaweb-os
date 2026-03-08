@@ -2,11 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Wallet } = require("ethers");
 const { createApp } = require("../dist/index.js");
+const { AuthStore } = require("../dist/auth/store.js");
 const { PodStore } = require("../dist/pods/store.js");
 
-const startTestServer = async () => {
+const startTestServer = async ({ authStore = new AuthStore() } = {}) => {
   const store = new PodStore();
-  const app = createApp(store);
+  const app = createApp(store, authStore);
 
   return new Promise((resolve) => {
     const server = app.listen(0, () => {
@@ -19,6 +20,31 @@ const startTestServer = async () => {
       });
     });
   });
+};
+
+const createSession = async (server, wallet = Wallet.createRandom()) => {
+  const nonceResponse = await fetch(`${server.baseUrl}/api/auth/nonce`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ address: wallet.address })
+  });
+
+  assert.equal(nonceResponse.status, 200);
+  const challenge = await nonceResponse.json();
+  const signature = await wallet.signMessage(challenge.message);
+
+  const verifyResponse = await fetch(`${server.baseUrl}/api/auth/verify`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ address: wallet.address, signature })
+  });
+
+  assert.equal(verifyResponse.status, 200);
+  const session = await verifyResponse.json();
+  return {
+    session,
+    wallet
+  };
 };
 
 test("POST /api/pods creates a pod and returns subdomain", async () => {
@@ -61,7 +87,10 @@ test("GET /api/pods lists created pods", async () => {
       body: JSON.stringify({ name: "beta" })
     });
 
-    const response = await fetch(`${server.baseUrl}/api/pods`);
+    const { session } = await createSession(server);
+    const response = await fetch(`${server.baseUrl}/api/pods`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
     assert.equal(response.status, 200);
 
     const payload = await response.json();
@@ -79,6 +108,7 @@ test("GET /api/pods/:id returns pod status and subdomain", async () => {
   const server = await startTestServer();
 
   try {
+    const { session } = await createSession(server);
     const created = await fetch(`${server.baseUrl}/api/pods`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -86,7 +116,9 @@ test("GET /api/pods/:id returns pod status and subdomain", async () => {
     });
 
     const pod = await created.json();
-    const response = await fetch(`${server.baseUrl}/api/pods/${pod.id}`);
+    const response = await fetch(`${server.baseUrl}/api/pods/${pod.id}`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
     assert.equal(response.status, 200);
 
     const payload = await response.json();
@@ -102,7 +134,10 @@ test("GET /api/pods/:id returns 404 for unknown pod", async () => {
   const server = await startTestServer();
 
   try {
-    const response = await fetch(`${server.baseUrl}/api/pods/missing-id`);
+    const { session } = await createSession(server);
+    const response = await fetch(`${server.baseUrl}/api/pods/missing-id`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
     assert.equal(response.status, 404);
 
     const payload = await response.json();
@@ -116,6 +151,7 @@ test("DELETE /api/pods/:id deletes pod", async () => {
   const server = await startTestServer();
 
   try {
+    const { session } = await createSession(server);
     const created = await fetch(`${server.baseUrl}/api/pods`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -124,11 +160,14 @@ test("DELETE /api/pods/:id deletes pod", async () => {
 
     const pod = await created.json();
     const deleted = await fetch(`${server.baseUrl}/api/pods/${pod.id}`, {
-      method: "DELETE"
+      method: "DELETE",
+      headers: { authorization: `Bearer ${session.token}` }
     });
     assert.equal(deleted.status, 204);
 
-    const lookup = await fetch(`${server.baseUrl}/api/pods/${pod.id}`);
+    const lookup = await fetch(`${server.baseUrl}/api/pods/${pod.id}`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
     assert.equal(lookup.status, 404);
   } finally {
     await server.close();
@@ -139,8 +178,10 @@ test("DELETE /api/pods/:id returns 404 for unknown pod", async () => {
   const server = await startTestServer();
 
   try {
+    const { session } = await createSession(server);
     const response = await fetch(`${server.baseUrl}/api/pods/missing-id`, {
-      method: "DELETE"
+      method: "DELETE",
+      headers: { authorization: `Bearer ${session.token}` }
     });
 
     assert.equal(response.status, 404);
@@ -177,8 +218,64 @@ test("POST /api/auth/verify returns session token for valid signature", async ()
     assert.equal(verifyResponse.status, 200);
     const session = await verifyResponse.json();
     assert.equal(typeof session.token, "string");
-    assert.equal(session.address, wallet.address);
     assert.equal(typeof session.expiresAt, "string");
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/pods returns 401 without session token", async () => {
+  const server = await startTestServer();
+
+  try {
+    const response = await fetch(`${server.baseUrl}/api/pods`);
+    assert.equal(response.status, 401);
+    const payload = await response.json();
+    assert.equal(payload.error, "Unauthorized");
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/pods returns pods for authenticated session", async () => {
+  const server = await startTestServer();
+
+  try {
+    await fetch(`${server.baseUrl}/api/pods`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "alpha" })
+    });
+
+    const { session } = await createSession(server);
+    const response = await fetch(`${server.baseUrl}/api/pods`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(Array.isArray(payload.pods), true);
+    assert.equal(payload.pods.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /api/pods returns 401 after session expiry", async () => {
+  const authStore = new AuthStore({ sessionTtlMs: 20 });
+  const server = await startTestServer({ authStore });
+
+  try {
+    const { session } = await createSession(server);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const response = await fetch(`${server.baseUrl}/api/pods`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
+
+    assert.equal(response.status, 401);
+    const payload = await response.json();
+    assert.equal(payload.error, "Unauthorized");
   } finally {
     await server.close();
   }

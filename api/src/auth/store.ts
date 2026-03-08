@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "crypto";
+import { randomBytes } from "crypto";
 import { utils } from "ethers";
 
 interface ChallengeRecord {
@@ -7,36 +7,37 @@ interface ChallengeRecord {
   expiresAt: number;
 }
 
-interface SessionPayload {
-  sub: string;
-  iat: number;
-  exp: number;
+export interface SessionRecord {
+  token: string;
+  expiresAt: string;
 }
 
-export interface SessionRecord {
+export interface SessionIdentity {
   token: string;
   address: string;
   expiresAt: string;
 }
 
+interface StoredSession {
+  address: string;
+  expiresAtMs: number;
+}
+
 export class AuthStore {
   private readonly challenges = new Map<string, ChallengeRecord>();
+  private readonly sessions = new Map<string, StoredSession>();
   private readonly challengeTtlMs: number;
   private readonly sessionTtlMs: number;
-  private readonly sessionSecret: string;
 
   constructor({
     challengeTtlMs = 5 * 60 * 1000,
     sessionTtlMs = 24 * 60 * 60 * 1000,
-    sessionSecret = process.env.AUTH_SESSION_SECRET || "dev-session-secret"
   }: {
     challengeTtlMs?: number;
     sessionTtlMs?: number;
-    sessionSecret?: string;
   } = {}) {
     this.challengeTtlMs = challengeTtlMs;
     this.sessionTtlMs = sessionTtlMs;
-    this.sessionSecret = sessionSecret;
   }
 
   createChallenge(address: string): ChallengeRecord {
@@ -83,21 +84,40 @@ export class AuthStore {
     }
 
     this.challenges.delete(addressKey);
-    const issuedAtSeconds = Math.floor(Date.now() / 1000);
-    const expiresAtSeconds = issuedAtSeconds + Math.floor(this.sessionTtlMs / 1000);
-    const payload: SessionPayload = {
-      sub: normalizedAddress,
-      iat: issuedAtSeconds,
-      exp: expiresAtSeconds
-    };
+    return this.createSession(normalizedAddress);
+  }
 
-    const payloadPart = Buffer.from(JSON.stringify(payload)).toString("base64url");
-    const signaturePart = createHmac("sha256", this.sessionSecret).update(payloadPart).digest("base64url");
+  validateSession(token: string): SessionIdentity | null {
+    const session = this.sessions.get(token);
+
+    if (!session) {
+      return null;
+    }
+
+    if (session.expiresAtMs <= Date.now()) {
+      this.sessions.delete(token);
+      return null;
+    }
 
     return {
-      token: `${payloadPart}.${signaturePart}`,
-      address: normalizedAddress,
-      expiresAt: new Date(expiresAtSeconds * 1000).toISOString()
+      token,
+      address: session.address,
+      expiresAt: new Date(session.expiresAtMs).toISOString()
+    };
+  }
+
+  private createSession(address: string): SessionRecord {
+    const token = randomBytes(32).toString("base64url");
+    const expiresAtMs = Date.now() + this.sessionTtlMs;
+
+    this.sessions.set(token, {
+      address,
+      expiresAtMs
+    });
+
+    return {
+      token,
+      expiresAt: new Date(expiresAtMs).toISOString()
     };
   }
 

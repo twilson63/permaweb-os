@@ -5,9 +5,9 @@ import {
   listPods,
   requestWalletChallenge,
   type Pod,
-  type WalletAuthSession,
   verifyWalletSignature
 } from "./api";
+import { authStore } from "./auth/store";
 
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -23,15 +23,14 @@ const formatDate = (value: string): string => {
 };
 
 const App = () => {
+  const initialSession = authStore.getSession();
   const [pods, setPods] = useState<Pod[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [walletAddress, setWalletAddress] = useState<string | null>(() => localStorage.getItem("webos.walletAddress"));
-  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(() =>
-    localStorage.getItem("webos.sessionExpiresAt")
-  );
+  const [walletAddress, setWalletAddress] = useState<string | null>(initialSession?.address ?? null);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(initialSession?.expiresAt ?? null);
   const [connectingWallet, setConnectingWallet] = useState(false);
 
   const podCountLabel = useMemo(
@@ -48,6 +47,11 @@ const App = () => {
       setPods(nextPods);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Failed to load pods";
+      if (message === "Unauthorized") {
+        authStore.clearSession();
+        setWalletAddress(null);
+        setSessionExpiresAt(null);
+      }
       setError(message);
     } finally {
       setLoading(false);
@@ -132,13 +136,15 @@ const App = () => {
         throw new Error("Wallet did not return a signature");
       }
 
-      const session: WalletAuthSession = await verifyWalletSignature(address, signatureResponse);
-
-      localStorage.setItem("webos.sessionToken", session.token);
-      localStorage.setItem("webos.walletAddress", session.address);
-      localStorage.setItem("webos.sessionExpiresAt", session.expiresAt);
-      setWalletAddress(session.address);
+      const session = await verifyWalletSignature(address, signatureResponse);
+      authStore.setSession({
+        token: session.token,
+        address,
+        expiresAt: session.expiresAt
+      });
+      setWalletAddress(address);
       setSessionExpiresAt(session.expiresAt);
+      await refreshPods();
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : "Wallet connection failed";
       setError(message);

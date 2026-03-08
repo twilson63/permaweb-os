@@ -1,4 +1,5 @@
 import { signatureHeaders, type RequestLike, type Signer } from "http-message-sig";
+import { authStore } from "./auth/store";
 
 export interface Pod {
   id: string;
@@ -15,7 +16,6 @@ export interface WalletAuthChallenge {
 
 export interface WalletAuthSession {
   token: string;
-  address: string;
   expiresAt: string;
 }
 
@@ -138,7 +138,7 @@ export async function podFetchWithHttpSig(
 }
 
 const getAuthHeaders = (): HeadersInit => {
-  const token = localStorage.getItem("webos.sessionToken");
+  const token = authStore.getSession()?.token;
 
   if (!token) {
     return {};

@@ -1,4 +1,5 @@
 import express from "express";
+import { createSessionAuthMiddleware } from "./auth/middleware";
 import { AuthStore } from "./auth/store";
 import { PodStore } from "./pods/store";
 
@@ -6,6 +7,8 @@ export const createApp = (store: PodStore = new PodStore(), authStore: AuthStore
   const app = express();
 
   app.use(express.json());
+
+  const requireSession = createSessionAuthMiddleware(authStore);
 
   app.post("/api/auth/nonce", (req, res) => {
     const address = typeof req.body?.address === "string" ? req.body.address : "";
@@ -53,11 +56,11 @@ export const createApp = (store: PodStore = new PodStore(), authStore: AuthStore
     res.status(201).json(pod);
   });
 
-  app.get("/api/pods", (_req, res) => {
+  app.get("/api/pods", requireSession, (_req, res) => {
     res.json({ pods: store.list() });
   });
 
-  app.get("/api/pods/:id", (req, res) => {
+  app.get("/api/pods/:id", requireSession, (req, res) => {
     const pod = store.get(req.params.id);
 
     if (!pod) {
@@ -68,7 +71,7 @@ export const createApp = (store: PodStore = new PodStore(), authStore: AuthStore
     res.json(pod);
   });
 
-  app.delete("/api/pods/:id", (req, res) => {
+  app.delete("/api/pods/:id", requireSession, (req, res) => {
     const deleted = store.delete(req.params.id);
 
     if (!deleted) {
