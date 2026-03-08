@@ -64,21 +64,11 @@ async function close(server: Server): Promise<void> {
   });
 }
 
-test("POST /verify proxies verified request as JSONL stream", async () => {
+test("POST /verify returns 400 for missing content", async () => {
   const wallet = Wallet.createRandom();
   const ownerKeyId = wallet.address.toLowerCase();
-  const openCodeServer = createServer((req, res) => {
-    assert.equal(req.url, "/verify");
-    assert.equal(req.method, "POST");
-    res.writeHead(200, { "content-type": "application/x-ndjson" });
-    res.write('{"type":"assistant_message","content":"hello"}\n');
-    res.end('{"type":"done","status":"success"}\n');
-  });
-  const openCodePort = await listen(openCodeServer);
-  const server = createSidecarServer({
-    ownerKeyId,
-    openCodeBaseUrl: `http://127.0.0.1:${openCodePort}`,
-  });
+
+  const server = createSidecarServer({ ownerKeyId });
   const sidecarPort = await listen(server);
 
   try {
@@ -92,37 +82,24 @@ test("POST /verify proxies verified request as JSONL stream", async () => {
         date,
         signature: signedHeaders.Signature,
         "signature-input": signedHeaders["Signature-Input"],
+        "content-type": "application/json",
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({}), // No content field
     });
 
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("content-type"), "application/x-ndjson");
-
-    const body = await response.text();
-    assert.equal(
-      body,
-      '{"type":"assistant_message","content":"hello"}\n{"type":"done","status":"success"}\n',
-    );
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.equal(body.error, "missing content");
   } finally {
-    await Promise.all([close(server), close(openCodeServer)]);
+    await close(server);
   }
 });
 
 test("POST /verify returns 401 for invalid signature", async () => {
   const wallet = Wallet.createRandom();
   const ownerKeyId = wallet.address.toLowerCase();
-  let upstreamCalled = false;
-  const openCodeServer = createServer((_req, res) => {
-    upstreamCalled = true;
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end("{}\n");
-  });
-  const openCodePort = await listen(openCodeServer);
-  const server = createSidecarServer({
-    ownerKeyId,
-    openCodeBaseUrl: `http://127.0.0.1:${openCodePort}`,
-  });
+
+  const server = createSidecarServer({ ownerKeyId });
   const sidecarPort = await listen(server);
 
   try {
@@ -137,13 +114,69 @@ test("POST /verify returns 401 for invalid signature", async () => {
         date: tamperedDate,
         signature: signedHeaders.Signature,
         "signature-input": signedHeaders["Signature-Input"],
+        "content-type": "application/json",
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ content: "hello" }),
     });
 
     assert.equal(response.status, 401);
-    assert.equal(upstreamCalled, false);
+    const body = await response.json();
+    assert.equal(body.error, "invalid signature");
   } finally {
-    await Promise.all([close(server), close(openCodeServer)]);
+    await close(server);
+  }
+});
+
+test("POST /verify returns 401 for missing signature", async () => {
+  const server = createSidecarServer({ ownerKeyId: "owner" });
+  const sidecarPort = await listen(server);
+
+  try {
+    const host = `127.0.0.1:${sidecarPort}`;
+
+    const response = await fetch(`http://${host}/verify`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ content: "hello" }),
+    });
+
+    assert.equal(response.status, 401);
+    const body = await response.json();
+    assert.equal(body.error, "missing signature header");
+  } finally {
+    await close(server);
+  }
+});
+
+test("POST /verify returns 400 for invalid JSON", async () => {
+  const wallet = Wallet.createRandom();
+  const ownerKeyId = wallet.address.toLowerCase();
+
+  const server = createSidecarServer({ ownerKeyId });
+  const sidecarPort = await listen(server);
+
+  try {
+    const host = `127.0.0.1:${sidecarPort}`;
+    const date = new Date().toUTCString();
+    const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date });
+
+    const response = await fetch(`http://${host}/verify`, {
+      method: "POST",
+      headers: {
+        date,
+        signature: signedHeaders.Signature,
+        "signature-input": signedHeaders["Signature-Input"],
+        "content-type": "application/json",
+      },
+      body: "not valid json",
+    });
+
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.equal(body.error, "invalid JSON");
+  } finally {
+    await close(server);
   }
 });
