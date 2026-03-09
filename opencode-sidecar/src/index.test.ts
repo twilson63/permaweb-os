@@ -3,6 +3,7 @@ import { createServer, Server } from "node:http";
 import test from "node:test";
 import { Wallet } from "ethers";
 import { signatureHeaders, type RequestLike, type Signer } from "http-message-sig";
+import { computeContentDigest } from "./httpSig";
 import { createSidecarServer } from "./index";
 
 function signatureHexToBytes(signatureHex: string): Uint8Array {
@@ -14,6 +15,7 @@ async function createSignedHeaders(input: {
   keyId: string;
   host: string;
   date: string;
+  body: string;
 }): Promise<{ Signature: string; "Signature-Input": string }> {
   const message: RequestLike = {
     method: "POST",
@@ -22,6 +24,7 @@ async function createSignedHeaders(input: {
     headers: {
       host: input.host,
       date: input.date,
+      "content-digest": computeContentDigest(input.body),
     },
   };
 
@@ -36,7 +39,7 @@ async function createSignedHeaders(input: {
 
   return signatureHeaders(message, {
     signer,
-    components: ["@method", "@path", "host", "date"],
+    components: ["@method", "@path", "host", "date", "content-digest"],
   });
 }
 
@@ -74,22 +77,24 @@ test("POST /verify returns 400 for missing content", async () => {
   try {
     const host = `127.0.0.1:${sidecarPort}`;
     const date = new Date().toUTCString();
-    const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date });
+    const body = JSON.stringify({});
+    const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date, body });
 
     const response = await fetch(`http://${host}/verify`, {
       method: "POST",
       headers: {
         date,
+        "content-digest": computeContentDigest(body),
         signature: signedHeaders.Signature,
         "signature-input": signedHeaders["Signature-Input"],
         "content-type": "application/json",
       },
-      body: JSON.stringify({}), // No content field
+      body, // No content field
     });
 
     assert.equal(response.status, 400);
-    const body = await response.json();
-    assert.equal(body.error, "missing content");
+    const responseBody = await response.json();
+    assert.equal(responseBody.error, "missing content");
   } finally {
     await close(server);
   }
@@ -106,22 +111,30 @@ test("POST /verify returns 401 for invalid signature", async () => {
     const host = `127.0.0.1:${sidecarPort}`;
     const signedDate = new Date().toUTCString();
     const tamperedDate = new Date(Date.now() + 60_000).toUTCString();
-    const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date: signedDate });
+    const body = JSON.stringify({ content: "hello" });
+    const signedHeaders = await createSignedHeaders({
+      wallet,
+      keyId: ownerKeyId,
+      host,
+      date: signedDate,
+      body,
+    });
 
     const response = await fetch(`http://${host}/verify`, {
       method: "POST",
       headers: {
         date: tamperedDate,
+        "content-digest": computeContentDigest(body),
         signature: signedHeaders.Signature,
         "signature-input": signedHeaders["Signature-Input"],
         "content-type": "application/json",
       },
-      body: JSON.stringify({ content: "hello" }),
+      body,
     });
 
     assert.equal(response.status, 401);
-    const body = await response.json();
-    assert.equal(body.error, "invalid signature");
+    const responseBody = await response.json();
+    assert.equal(responseBody.error, "invalid signature");
   } finally {
     await close(server);
   }
@@ -138,6 +151,7 @@ test("POST /verify returns 401 for missing signature", async () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        "content-digest": computeContentDigest(JSON.stringify({ content: "hello" })),
       },
       body: JSON.stringify({ content: "hello" }),
     });
@@ -160,22 +174,64 @@ test("POST /verify returns 400 for invalid JSON", async () => {
   try {
     const host = `127.0.0.1:${sidecarPort}`;
     const date = new Date().toUTCString();
-    const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date });
+    const body = "not valid json";
+    const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date, body });
 
     const response = await fetch(`http://${host}/verify`, {
       method: "POST",
       headers: {
         date,
+        "content-digest": computeContentDigest(body),
         signature: signedHeaders.Signature,
         "signature-input": signedHeaders["Signature-Input"],
         "content-type": "application/json",
       },
-      body: "not valid json",
+      body,
     });
 
     assert.equal(response.status, 400);
-    const body = await response.json();
-    assert.equal(body.error, "invalid JSON");
+    const responseBody = await response.json();
+    assert.equal(responseBody.error, "invalid JSON");
+  } finally {
+    await close(server);
+  }
+});
+
+test("POST /verify returns 401 for tampered request body", async () => {
+  const wallet = Wallet.createRandom();
+  const ownerKeyId = wallet.address.toLowerCase();
+
+  const server = createSidecarServer({ ownerKeyId });
+  const sidecarPort = await listen(server);
+
+  try {
+    const host = `127.0.0.1:${sidecarPort}`;
+    const date = new Date().toUTCString();
+    const signedBody = JSON.stringify({ content: "hello" });
+    const tamperedBody = JSON.stringify({ content: "tampered" });
+    const signedHeaders = await createSignedHeaders({
+      wallet,
+      keyId: ownerKeyId,
+      host,
+      date,
+      body: signedBody,
+    });
+
+    const response = await fetch(`http://${host}/verify`, {
+      method: "POST",
+      headers: {
+        date,
+        "content-digest": computeContentDigest(signedBody),
+        signature: signedHeaders.Signature,
+        "signature-input": signedHeaders["Signature-Input"],
+        "content-type": "application/json",
+      },
+      body: tamperedBody,
+    });
+
+    assert.equal(response.status, 401);
+    const responseBody = await response.json();
+    assert.equal(responseBody.error, "invalid content digest");
   } finally {
     await close(server);
   }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Wallet } from "ethers";
 import { signatureHeaders, type RequestLike, type Signer } from "http-message-sig";
+import { computeContentDigest } from "./httpSig";
 import { createSidecarServer } from "./index";
 import { createServer, Server } from "node:http";
 import { spawn } from "node:child_process";
@@ -15,6 +16,7 @@ async function createSignedHeaders(input: {
   keyId: string;
   host: string;
   date: string;
+  body: string;
 }): Promise<{ Signature: string; "Signature-Input": string }> {
   const message: RequestLike = {
     method: "POST",
@@ -23,6 +25,7 @@ async function createSignedHeaders(input: {
     headers: {
       host: input.host,
       date: input.date,
+      "content-digest": computeContentDigest(input.body),
     },
   };
 
@@ -37,7 +40,7 @@ async function createSignedHeaders(input: {
 
   return signatureHeaders(message, {
     signer,
-    components: ["@method", "@path", "host", "date"],
+    components: ["@method", "@path", "host", "date", "content-digest"],
   });
 }
 
@@ -78,17 +81,19 @@ test("pod integration: signed /verify request runs OpenCode and returns JSONL", 
   try {
     const host = `127.0.0.1:${sidecarPort}`;
     const date = new Date().toUTCString();
-    const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date });
+    const body = JSON.stringify({ content: "Say hello in 3 words" });
+    const signedHeaders = await createSignedHeaders({ wallet, keyId: ownerKeyId, host, date, body });
 
     const response = await fetch(`http://${host}/verify`, {
       method: "POST",
       headers: {
         date,
+        "content-digest": computeContentDigest(body),
         signature: signedHeaders.Signature,
         "signature-input": signedHeaders["Signature-Input"],
         "content-type": "application/json",
       },
-      body: JSON.stringify({ content: "Say hello in 3 words" }),
+      body,
     });
 
     assert.equal(response.status, 200, `Expected 200, got ${response.status}`);

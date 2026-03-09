@@ -114,6 +114,67 @@ function toHeaderRecord(headers: Headers): Record<string, string> {
 }
 
 /**
+ * Computes an RFC 9530 Content-Digest value for request signing.
+ *
+ * @param body - Body text hashed as UTF-8.
+ * @returns `sha-256=:<base64>:` digest header value.
+ */
+async function computeContentDigest(body: string): Promise<string> {
+  const bytes = new TextEncoder().encode(body);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
+  const hashBytes = new Uint8Array(hashBuffer);
+  let binary = "";
+
+  for (const value of hashBytes) {
+    binary += String.fromCharCode(value);
+  }
+
+  return `sha-256=:${btoa(binary)}:`;
+}
+
+/**
+ * Converts fetch body input into the UTF-8 text used for digesting.
+ *
+ * @param body - Fetch request body.
+ * @returns Text representation for digest computation.
+ */
+function normalizeBodyForDigest(body: BodyInit | null | undefined): string {
+  if (body === undefined || body === null) {
+    return "";
+  }
+
+  if (typeof body === "string") {
+    return body;
+  }
+
+  if (body instanceof URLSearchParams) {
+    return body.toString();
+  }
+
+  if (body instanceof FormData) {
+    throw new Error("FormData request bodies are not supported with HTTP signature digesting");
+  }
+
+  if (body instanceof Blob) {
+    throw new Error("Blob request bodies are not supported with HTTP signature digesting");
+  }
+
+  if (body instanceof ReadableStream) {
+    throw new Error("ReadableStream request bodies are not supported with HTTP signature digesting");
+  }
+
+  if (body instanceof ArrayBuffer) {
+    return new TextDecoder().decode(new Uint8Array(body));
+  }
+
+  if (ArrayBuffer.isView(body)) {
+    return new TextDecoder().decode(body as ArrayBufferView);
+  }
+
+  return String(body);
+}
+
+/**
  * Builds HTTP Message Signature headers using an Ethereum wallet signer.
  *
  * @param input - Signature construction parameters.
@@ -125,9 +186,12 @@ async function createHttpSigHeaders(input: {
   requestUrl: string;
   method: string;
   headers?: HeadersInit;
+  body?: BodyInit | null;
 }): Promise<Headers> {
   const requestUrl = new URL(input.requestUrl, window.location.origin);
   const headers = new Headers(input.headers);
+  const digestBody = normalizeBodyForDigest(input.body);
+  const contentDigest = await computeContentDigest(digestBody);
 
   if (!headers.has("date")) {
     headers.set("date", new Date().toUTCString());
@@ -136,6 +200,8 @@ async function createHttpSigHeaders(input: {
   if (!headers.has("host")) {
     headers.set("host", requestUrl.host);
   }
+
+  headers.set("content-digest", contentDigest);
 
   const requestLike: RequestLike = {
     method: input.method,
@@ -163,7 +229,7 @@ async function createHttpSigHeaders(input: {
 
   const signedHeaders = await signatureHeaders(requestLike, {
     signer,
-    components: ["@method", "@path", "host", "date"],
+    components: ["@method", "@path", "host", "date", "content-digest"],
   });
 
   headers.set("Signature", signedHeaders.Signature);
@@ -193,6 +259,7 @@ export async function podFetchWithHttpSig(
     requestUrl,
     method,
     headers: init.headers,
+    body: init.body ?? null,
   });
 
   return fetch(requestUrl, {

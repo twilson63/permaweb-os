@@ -10,7 +10,12 @@ import {
   type Signer,
   type SignerSync,
 } from "http-message-sig";
-import { HttpSigAlgorithm, verifyHttpMessageSignature } from "./httpSig";
+import {
+  computeContentDigest,
+  HttpSigAlgorithm,
+  validateContentDigest,
+  verifyHttpMessageSignature,
+} from "./httpSig";
 
 type PrivateKey = ReturnType<typeof generateKeyPairSync>["privateKey"];
 type DigestHttpSigAlgorithm = Exclude<HttpSigAlgorithm, "eth-personal-sign">;
@@ -48,7 +53,11 @@ function createSignedRequest(input: {
   keyId: string;
   privateKey: PrivateKey;
   algorithm: DigestHttpSigAlgorithm;
+  body?: string;
+  includeDigestComponent?: boolean;
 }): RequestLike {
+  const body = input.body ?? "";
+  const includeDigestComponent = input.includeDigestComponent ?? true;
   const message: RequestLike = {
     method: "POST",
     url: "/verify",
@@ -56,6 +65,7 @@ function createSignedRequest(input: {
     headers: {
       host: "pod.permaweb.live",
       date: "Sat, 07 Mar 2026 12:00:00 GMT",
+      "content-digest": computeContentDigest(body),
     },
   };
 
@@ -68,7 +78,9 @@ function createSignedRequest(input: {
 
   const headers = signatureHeadersSync(message, {
     signer,
-    components: ["@method", "@path", "host", "date"],
+    components: includeDigestComponent
+      ? ["@method", "@path", "host", "date", "content-digest"]
+      : ["@method", "@path", "host", "date"],
   });
 
   message.headers = {
@@ -79,6 +91,22 @@ function createSignedRequest(input: {
 
   return message;
 }
+
+test("computes content digest in sha-256 base64 format", () => {
+  assert.equal(
+    computeContentDigest('{"content":"hello"}'),
+    "sha-256=:ILLdqUDXQdl4CJcgCq7y7zVqsys4x94NlDBvtaZrSo4=:"
+  );
+});
+
+test("validates content digest against request body", () => {
+  const body = '{"content":"hello"}';
+  const digest = computeContentDigest(body);
+
+  assert.equal(validateContentDigest(body, digest), true);
+  assert.equal(validateContentDigest('{"content":"tampered"}', digest), false);
+  assert.equal(validateContentDigest(body, "sha-256=:invalid:"), false);
+});
 
 test("accepts valid RSA HTTP message signature", async () => {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -157,6 +185,28 @@ test("rejects signature with unknown key id", async () => {
   assert.equal(verified, false);
 });
 
+test("rejects signature input that omits content-digest component", async () => {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const keyId = "owner-rsa";
+  const request = createSignedRequest({
+    keyId,
+    privateKey,
+    algorithm: "rsa-v1_5-sha256",
+    body: '{"content":"hello"}',
+    includeDigestComponent: false,
+  });
+
+  const verified = await verifyHttpMessageSignature(request, async (requestedKeyId) => {
+    if (requestedKeyId !== keyId) {
+      return undefined;
+    }
+
+    return publicKey.export({ type: "spki", format: "pem" }).toString();
+  });
+
+  assert.equal(verified, false);
+});
+
 test("accepts valid Ethereum personal_sign HTTP message signature", async () => {
   const wallet = Wallet.createRandom();
   const keyId = wallet.address.toLowerCase();
@@ -167,6 +217,7 @@ test("accepts valid Ethereum personal_sign HTTP message signature", async () => 
     headers: {
       host: "pod.permaweb.live",
       date: "Sat, 07 Mar 2026 12:00:00 GMT",
+      "content-digest": computeContentDigest('{"content":"hello"}'),
     },
   };
 
@@ -181,7 +232,7 @@ test("accepts valid Ethereum personal_sign HTTP message signature", async () => 
 
   const headers = await signatureHeaders(message, {
     signer,
-    components: ["@method", "@path", "host", "date"],
+    components: ["@method", "@path", "host", "date", "content-digest"],
   });
 
   message.headers = {
@@ -206,6 +257,7 @@ test("rejects Ethereum personal_sign signature for different key id", async () =
     headers: {
       host: "pod.permaweb.live",
       date: "Sat, 07 Mar 2026 12:00:00 GMT",
+      "content-digest": computeContentDigest('{"content":"hello"}'),
     },
   };
 
@@ -220,7 +272,7 @@ test("rejects Ethereum personal_sign signature for different key id", async () =
 
   const headers = await signatureHeaders(message, {
     signer,
-    components: ["@method", "@path", "host", "date"],
+    components: ["@method", "@path", "host", "date", "content-digest"],
   });
 
   message.headers = {

@@ -1,6 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
-import { verifyHttpMessageSignature } from "./httpSig";
+import { validateContentDigest, verifyHttpMessageSignature } from "./httpSig";
 
 /**
  * Sidecar server entry point.
@@ -32,6 +32,20 @@ interface SidecarConfig {
 function hasHttpSignatureHeader(req: IncomingMessage): boolean {
   const signature = req.headers["signature"];
   return typeof signature === "string" && signature.length > 0;
+}
+
+/**
+ * Returns a single string header value when present.
+ *
+ * @param value - Header value from Node request headers.
+ * @returns Header value or undefined when not singular string.
+ */
+function getSingleHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  return undefined;
 }
 
 /**
@@ -163,6 +177,20 @@ export function createSidecarServer(config: SidecarConfig = {}) {
         return;
       }
 
+      let body: string;
+      try {
+        body = await readRequestBody(req);
+      } catch {
+        sendJson(res, 400, { error: "failed to read request body" });
+        return;
+      }
+
+      const contentDigestHeader = getSingleHeaderValue(req.headers["content-digest"]);
+      if (!contentDigestHeader || !validateContentDigest(body, contentDigestHeader)) {
+        sendJson(res, 401, { error: "invalid content digest" });
+        return;
+      }
+
       const verified = await verifyHttpMessageSignature(
         {
           method: req.method,
@@ -182,15 +210,6 @@ export function createSidecarServer(config: SidecarConfig = {}) {
 
       if (!verified) {
         sendJson(res, 401, { error: "invalid signature" });
-        return;
-      }
-
-      /** Read and parse the JSON request payload after signature validation. */
-      let body: string;
-      try {
-        body = await readRequestBody(req);
-      } catch (err) {
-        sendJson(res, 400, { error: "failed to read request body" });
         return;
       }
 
