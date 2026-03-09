@@ -3,6 +3,73 @@ import { verifyMessage } from "ethers";
 import { verify, type Parameters, type RequestLike } from "http-message-sig";
 
 /**
+ * Replay attack prevention cache.
+ *
+ * Tracks recently seen signatures to prevent replay attacks within
+ * the freshness window. Uses an in-memory LRU-style cache with TTL.
+ */
+
+interface ReplayCacheEntry {
+  seenAt: number;
+  signature: string;
+}
+
+const replayCache = new Map<string, ReplayCacheEntry>();
+const REPLAY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Purges expired entries from the replay cache.
+ * Called on each check to prevent unbounded growth.
+ */
+function purgeExpiredEntries(): void {
+  const now = Date.now();
+  for (const [key, entry] of replayCache.entries()) {
+    if (now - entry.seenAt > REPLAY_CACHE_TTL_MS) {
+      replayCache.delete(key);
+    }
+  }
+}
+
+/**
+ * Checks if a signature has been seen recently (replay attack detection).
+ *
+ * @param keyId - The key identifier from the signature.
+ * @param signature - The raw signature bytes.
+ * @returns `true` if this signature was seen within the TTL window.
+ */
+export function isReplayAttack(keyId: string, signature: Uint8Array): boolean {
+  purgeExpiredEntries();
+
+  const signatureHex = Buffer.from(signature).toString("hex");
+  const cacheKey = `${keyId}:${signatureHex}`;
+
+  return replayCache.has(cacheKey);
+}
+
+/**
+ * Records a signature as seen to prevent future replays.
+ *
+ * @param keyId - The key identifier from the signature.
+ * @param signature - The raw signature bytes.
+ */
+export function recordSignature(keyId: string, signature: Uint8Array): void {
+  const signatureHex = Buffer.from(signature).toString("hex");
+  const cacheKey = `${keyId}:${signatureHex}`;
+
+  replayCache.set(cacheKey, {
+    seenAt: Date.now(),
+    signature: signatureHex,
+  });
+}
+
+/**
+ * Clears the replay cache (useful for testing).
+ */
+export function clearReplayCache(): void {
+  replayCache.clear();
+}
+
+/**
  * HTTP signature algorithms supported by sidecar verification.
  */
 export type HttpSigAlgorithm =
@@ -272,16 +339,29 @@ export async function verifyHttpMessageSignature(
         return false;
       }
 
-      if (algorithm === "eth-personal-sign") {
-        return verifyEthereumPersonalSign(keyId, signingString, signature);
-      }
-
-      const publicKey = await resolvePublicKey(keyId, algorithm);
-      if (!publicKey) {
+      // Check for replay attack before verifying
+      if (isReplayAttack(keyId, signature)) {
         return false;
       }
 
-      return verifyByAlgorithm(algorithm, signingString, signature, publicKey);
+      let isValid: boolean;
+
+      if (algorithm === "eth-personal-sign") {
+        isValid = verifyEthereumPersonalSign(keyId, signingString, signature);
+      } else {
+        const publicKey = await resolvePublicKey(keyId, algorithm);
+        if (!publicKey) {
+          return false;
+        }
+        isValid = verifyByAlgorithm(algorithm, signingString, signature, publicKey);
+      }
+
+      // Record valid signatures to prevent replay
+      if (isValid) {
+        recordSignature(keyId, signature);
+      }
+
+      return isValid;
     });
   } catch {
     return false;

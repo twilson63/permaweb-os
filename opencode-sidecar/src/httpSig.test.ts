@@ -11,6 +11,7 @@ import {
   type SignerSync,
 } from "http-message-sig";
 import {
+  clearReplayCache,
   computeContentDigest,
   HttpSigAlgorithm,
   validateContentDigest,
@@ -305,4 +306,77 @@ test("rejects Ethereum personal_sign signature for different key id", async () =
   });
 
   assert.equal(verified, false);
+});
+
+test("rejects replayed signature within TTL window", async () => {
+  clearReplayCache();
+
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const keyId = "replay-test";
+  const request = createSignedRequest({
+    keyId,
+    privateKey,
+    algorithm: "rsa-v1_5-sha256",
+  });
+
+  // First request should succeed
+  const firstVerify = await verifyHttpMessageSignature(request, async (requestedKeyId) => {
+    if (requestedKeyId !== keyId) {
+      return undefined;
+    }
+    return publicKey.export({ type: "spki", format: "pem" }).toString();
+  });
+
+  assert.equal(firstVerify, true);
+
+  // Same signature replayed should fail
+  const replayVerify = await verifyHttpMessageSignature(request, async (requestedKeyId) => {
+    if (requestedKeyId !== keyId) {
+      return undefined;
+    }
+    return publicKey.export({ type: "spki", format: "pem" }).toString();
+  });
+
+  assert.equal(replayVerify, false);
+});
+
+test("accepts different signatures from same key", async () => {
+  clearReplayCache();
+
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const keyId = "multi-sign";
+
+  // First request
+  const request1 = createSignedRequest({
+    keyId,
+    privateKey,
+    algorithm: "rsa-v1_5-sha256",
+    body: '{"content":"first"}',
+  });
+
+  const verify1 = await verifyHttpMessageSignature(request1, async (requestedKeyId) => {
+    if (requestedKeyId !== keyId) {
+      return undefined;
+    }
+    return publicKey.export({ type: "spki", format: "pem" }).toString();
+  });
+
+  assert.equal(verify1, true);
+
+  // Second request with different body (different signature)
+  const request2 = createSignedRequest({
+    keyId,
+    privateKey,
+    algorithm: "rsa-v1_5-sha256",
+    body: '{"content":"second"}',
+  });
+
+  const verify2 = await verifyHttpMessageSignature(request2, async (requestedKeyId) => {
+    if (requestedKeyId !== keyId) {
+      return undefined;
+    }
+    return publicKey.export({ type: "spki", format: "pem" }).toString();
+  });
+
+  assert.equal(verify2, true);
 });
