@@ -28,6 +28,7 @@ export interface Pod {
   createdAt: string;
   llm: PodLlmConfig;
   llmSecretName: string;
+  ownerKeyId: string;
 }
 
 /**

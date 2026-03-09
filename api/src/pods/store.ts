@@ -80,6 +80,7 @@ export class PodStore {
   create(ownerWallet: string, input: CreatePodInput = {}, llm: PodLlmConfig): Pod {
     const id = randomUUID();
     const llmSecretName = this.resolveLlmSecretName(ownerWallet);
+    const ownerKeyId = normalizeWalletAddress(ownerWallet);
     const pod: Pod = {
       id,
       name: input.name?.trim() || `pod-${id.slice(0, 8)}`,
@@ -88,7 +89,8 @@ export class PodStore {
       ownerWallet,
       createdAt: new Date().toISOString(),
       llm,
-      llmSecretName
+      llmSecretName,
+      ownerKeyId
     };
 
     this.pods.set(id, pod);
