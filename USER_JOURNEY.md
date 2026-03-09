@@ -391,16 +391,6 @@ Permaweb OS:
 
 ---
 
-## Pricing Model (Example)
-
-| Tier | Pods | Compute | Storage | Price |
-|------|------|---------|---------|-------|
-| Free | 1 | Limited | 1 GB | $0 |
-| Pro | 3 | 100 hrs/month | 10 GB | $29/month |
-| Team | 10 | 500 hrs/month | 50 GB | $99/month |
-
-*You only pay for compute time, not per message.*
-
 ---
 
 ## Getting Started
