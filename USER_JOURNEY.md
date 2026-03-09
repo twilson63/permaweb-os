@@ -14,6 +14,30 @@ Connect your wallet, spawn a pod, and start chatting. That's it.
 
 ## The Flow
 
+### 0. Admin Sets Up Cluster (One-Time)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Cluster Admin                                                  │
+│                                                                 │
+│  1. Deploy Permaweb OS to Kubernetes                            │
+│                                                                 │
+│  2. Create LLM API keys secret:                                 │
+│     kubectl create secret generic llm-api-keys \               │
+│       --from-literal=openai=sk-... \                            │
+│       --from-literal=anthropic=sk-ant-... \                     │
+│       -n web-os                                                 │
+│                                                                 │
+│  3. The keys are now available to ALL pods                      │
+│     - Mounted read-only at /secrets/llm/                        │
+│     - Users NEVER see the actual keys                           │
+│     - Admin can rotate keys without user action                 │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key insight:** Users don't bring their own LLM keys. The platform provides them.
+
 ### 1. Connect Your Wallet
 
 ```
@@ -57,8 +81,10 @@ Connect your wallet, spawn a pod, and start chatting. That's it.
 │                                                                 │
 │  Server: Creates pod                                            │
 │          - Spawns OpenCode container                            │
-│          - Mounts API keys at /secrets/llm/                     │
+│          - Mounts ADMIN's LLM keys at /secrets/llm/             │
+│            (user never sees the actual keys)                    │
 │          - Assigns subdomain: abc123.pods.permaweb.live         │
+│          - Tracks usage for billing                             │
 │                                                                 │
 │  Response:                                                      │
 │       {                                                          │
@@ -75,9 +101,10 @@ Connect your wallet, spawn a pod, and start chatting. That's it.
 - Server creates a Kubernetes pod with:
   - OpenCode container (port 4096)
   - HTTPSig sidecar (port 3001)
-  - Your LLM keys mounted read-only
+  - **Admin's LLM keys** mounted read-only (NOT the user's keys)
 - Pod is bound to your wallet address
 - You get a unique subdomain
+- Usage is tracked per wallet for billing/analytics
 
 ### 3. Chat With Your Pod
 
@@ -327,11 +354,32 @@ permaweb chat "Hello, how can you help me?"
 |-----------------|--------------|
 | User account + password | Wallet = identity |
 | Shared infrastructure | Your own pod |
-| API keys in their database | API keys in your pod (you control) |
+| API keys in their database | **Admin provides LLM keys** |
 | They see your conversations | Only you see your conversations |
 | Trust them with your data | You control your data |
 | They can be subpoenaed | Decentralized, no single point of failure |
-| Monthly subscription | Pay for compute you use |
+| Per-user API keys required | **No API keys needed from users** |
+
+### Key Design: Admin-Provided LLM Keys
+
+```
+Traditional AI Platform:
+  User → Brings own API key → Stored in database → Risk of exposure
+
+Permaweb OS:
+  Admin → Sets cluster-wide LLM keys → Mounted to pods securely
+                                              │
+  User → Creates pod → Uses admin's keys (never sees them)
+                                              │
+  Platform → Tracks usage per wallet → Admin bills accordingly
+```
+
+**Benefits:**
+- Users don't need LLM API keys to get started
+- Admin manages and rotates keys centrally
+- Keys are never exposed to users (mounted read-only)
+- Usage is tracked per wallet for billing
+- Simple user onboarding (just connect wallet)
 
 ### Security Model
 
@@ -340,7 +388,10 @@ Traditional:
   User → Password → Server → Database (they see everything)
 
 Permaweb OS:
-  User → Wallet Signature → Your Pod → Your API Keys
+  User → Wallet Signature → Your Pod
+         │                      │
+         │                 Admin's LLM Keys
+         │                 (mounted, never exposed)
          │                      │
          └── Cryptographic proof ─┘
             that YOU made the request
@@ -348,7 +399,7 @@ Permaweb OS:
 
 ### What's NOT Stored
 
-- Your API keys are mounted, never returned by API
+- Admin's LLM API keys (mounted, never returned by API)
 - Your conversations happen in your pod
 - Your code lives in your pod
 - No central database of your data
@@ -356,7 +407,7 @@ Permaweb OS:
 ### What IS Stored
 
 - Pod metadata (id, subdomain, model, owner wallet)
-- Usage statistics (token counts, costs)
+- Usage statistics (token counts, costs) per wallet
 - Session tokens (temporary, expire)
 
 ---
@@ -365,6 +416,20 @@ Permaweb OS:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
+│                     CLUSTER ADMIN SETUP                         │
+│                                                                 │
+│  kubectl create secret generic llm-api-keys \                   │
+│    --from-literal=openai=sk-... \                               │
+│    --from-literal=anthropic=sk-ant-...                          │
+│                                                                 │
+│  These keys are available to ALL pods in the cluster.          │
+│  Users never see or manage these keys.                         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ Mounted to each pod
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
 │                         YOUR POD                                │
 │                                                                 │
 │  ┌─────────────────┐      ┌─────────────────┐                  │
@@ -372,30 +437,29 @@ Permaweb OS:
 │  │ (port 3001)     │      │ (port 4096)     │                  │
 │  │                 │      │                 │                  │
 │  │ • Verify sig    │      │ • Process msg   │                  │
-│  │ • Only your     │      │ • Use YOUR keys │                  │
-│  │   wallet        │      │ • Return JSONL  │                  │
-│  │ • Forward to    │      │                 │                  │
-│  │   OpenCode      │      └─────────────────┘                  │
-│  └─────────────────┘                                             │
-│           │                                                      │
-│           │ Only requests signed by YOUR wallet                │
-│           │                                                      │
-│  ┌─────────────────┐                                            │
-│  │ /secrets/llm/   │ ← Your API keys (mounted, read-only)      │
-│  │   anthropic     │                                            │
-│  │   openai        │                                            │
-│  └─────────────────┘                                            │
+│  │ • Only your     │      │ • Use ADMIN's  │                  │
+│  │   wallet        │      │   keys         │                  │
+│  │ • Forward to    │      │ • Return JSONL  │                  │
+│  │   OpenCode      │      │                 │                  │
+│  └─────────────────┘      └─────────────────┘                  │
+│           │                          │                         │
+│           │ Only requests             │                         │
+│           │ signed by YOUR wallet      │                         │
+│           │                           │                         │
+│  ┌─────────────────┐                 │                         │
+│  │ /secrets/llm/   │ ←─ Admin's keys │                         │
+│  │   anthropic     │   (read-only)   │                         │
+│  │   openai        │                 │                         │
+│  └─────────────────┘                 │                         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
----
-
 ## Getting Started
 
-### 1. Deploy the Platform
+### 0. Admin: Set Up Cluster (One-Time)
 
 ```bash
 # Clone the repo
@@ -405,11 +469,23 @@ cd permaweb-os
 # Deploy to Kubernetes
 kubectl apply -f k8s/
 
-# Or deploy to DigitalOcean
+# Create LLM API keys secret (users will use these)
+kubectl create secret generic llm-api-keys \
+  --from-literal=openai=sk-YOUR-OPENAI-KEY \
+  --from-literal=anthropic=sk-ant-YOUR-ANTHROPIC-KEY \
+  -n web-os
+
+# Or use DigitalOcean deployment
 ./scripts/deploy-digitalocean.sh
 ```
 
-### 2. Create Your Pod
+**Admin responsibility:**
+- Deploy the cluster
+- Provide LLM API keys
+- Monitor usage across wallets
+- Bill users based on token consumption
+
+### 1. User: Connect Your Wallet
 
 ```bash
 # Connect wallet, get session token
@@ -419,14 +495,23 @@ curl -X POST https://api.permaweb.live/auth/nonce \
 
 # Sign the nonce with your wallet
 
-# Create pod
+# Get session token
+curl -X POST https://api.permaweb.live/auth/verify \
+  -H "Content-Type: application/json" \
+  -d '{"walletAddress":"0xYourWallet","signature":"0x...","nonce":"..."}'
+```
+
+### 2. User: Create Your Pod
+
+```bash
+# Create pod (uses admin's LLM keys, not yours)
 curl -X POST https://api.permaweb.live/pods \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"model":"anthropic/claude-3-5-haiku"}'
 ```
 
-### 3. Start Chatting
+### 3. User: Start Chatting
 
 ```typescript
 // In your app
