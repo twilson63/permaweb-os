@@ -104,6 +104,30 @@ export function validateContentDigest(body: string, digestHeader: string): boole
 }
 
 /**
+ * Validates that a `Date` header is recent and not in the future.
+ *
+ * @param dateHeader - Raw HTTP Date header value.
+ * @param maxSkewMs - Maximum acceptable age in milliseconds.
+ * @returns `true` when date is valid and within allowed skew.
+ */
+export function validateFreshness(
+  dateHeader: string,
+  maxSkewMs: number = 5 * 60 * 1000,
+): boolean {
+  const parsedDate = Date.parse(dateHeader);
+  if (Number.isNaN(parsedDate)) {
+    return false;
+  }
+
+  const now = Date.now();
+  if (parsedDate > now) {
+    return false;
+  }
+
+  return now - parsedDate <= maxSkewMs;
+}
+
+/**
  * Coerces unknown parameter values into strings.
  *
  * @param value - Raw parameter value.

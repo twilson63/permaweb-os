@@ -559,6 +559,86 @@
       "totalTokens": 1998,
       "costUsd": 0.00074925,
       "createdAt": "2026-03-09T18:56:40.174Z"
+    },
+    {
+      "id": "232df116-bfb4-4634-8013-36e79fda69f9",
+      "ownerWallet": "0xf9e2ea246616E307f6e327261DC15C2C31f5534e",
+      "model": "openai/gpt-4o-mini",
+      "promptTokens": 1000,
+      "completionTokens": 2000,
+      "totalTokens": 3000,
+      "costUsd": 0.00135,
+      "createdAt": "2026-03-09T19:00:28.652Z"
+    },
+    {
+      "id": "9ac63221-c05e-434f-a552-a12e8174afe2",
+      "ownerWallet": "0x17E1c68DB708E951A43b302a131190f2C4671963",
+      "model": "openai/gpt-4o-mini",
+      "promptTokens": 1000,
+      "completionTokens": 1000,
+      "totalTokens": 2000,
+      "costUsd": 0.00075,
+      "createdAt": "2026-03-09T19:00:28.670Z"
+    },
+    {
+      "id": "bc6fd80d-dc58-4f6e-b5b5-0254caaa8584",
+      "ownerWallet": "0x17E1c68DB708E951A43b302a131190f2C4671963",
+      "model": "openai/gpt-4o-mini",
+      "promptTokens": 500,
+      "completionTokens": 500,
+      "totalTokens": 1000,
+      "costUsd": 0.000375,
+      "createdAt": "2026-03-09T19:00:28.671Z"
+    },
+    {
+      "id": "874f0b9c-62b3-4681-9e87-3ef33194d3ee",
+      "ownerWallet": "0x2788809E255B62146cAD8Eb9fe354392De27ed83",
+      "model": "openai/gpt-4o-mini",
+      "promptTokens": 999,
+      "completionTokens": 999,
+      "totalTokens": 1998,
+      "costUsd": 0.00074925,
+      "createdAt": "2026-03-09T19:00:28.671Z"
+    },
+    {
+      "id": "83ced326-832b-4318-9dea-4855ec6d63b3",
+      "ownerWallet": "0x20c9898bcaf6D251f1336aD692052813D8C3f7C5",
+      "model": "openai/gpt-4o-mini",
+      "promptTokens": 1000,
+      "completionTokens": 2000,
+      "totalTokens": 3000,
+      "costUsd": 0.00135,
+      "createdAt": "2026-03-09T19:00:55.568Z"
+    },
+    {
+      "id": "00b2cb13-9f45-4f1a-9205-97401e7f566a",
+      "ownerWallet": "0x07891C127f86bA2A47429d2Db4e03850355549EF",
+      "model": "openai/gpt-4o-mini",
+      "promptTokens": 1000,
+      "completionTokens": 1000,
+      "totalTokens": 2000,
+      "costUsd": 0.00075,
+      "createdAt": "2026-03-09T19:00:55.585Z"
+    },
+    {
+      "id": "57294568-6d23-4f0c-94b8-50ec4914e56f",
+      "ownerWallet": "0x07891C127f86bA2A47429d2Db4e03850355549EF",
+      "model": "openai/gpt-4o-mini",
+      "promptTokens": 500,
+      "completionTokens": 500,
+      "totalTokens": 1000,
+      "costUsd": 0.000375,
+      "createdAt": "2026-03-09T19:00:55.586Z"
+    },
+    {
+      "id": "118279a1-73a8-425a-b062-3d1436c0a0e0",
+      "ownerWallet": "0xF4CDf548586b580a9e2355D6BbCdE07e57856B79",
+      "model": "openai/gpt-4o-mini",
+      "promptTokens": 999,
+      "completionTokens": 999,
+      "totalTokens": 1998,
+      "costUsd": 0.00074925,
+      "createdAt": "2026-03-09T19:00:55.586Z"
     }
   ]
 }

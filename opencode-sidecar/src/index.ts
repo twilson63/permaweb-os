@@ -1,6 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
-import { validateContentDigest, verifyHttpMessageSignature } from "./httpSig";
+import { validateContentDigest, validateFreshness, verifyHttpMessageSignature } from "./httpSig";
 
 /**
  * Sidecar server entry point.
@@ -188,6 +188,12 @@ export function createSidecarServer(config: SidecarConfig = {}) {
       const contentDigestHeader = getSingleHeaderValue(req.headers["content-digest"]);
       if (!contentDigestHeader || !validateContentDigest(body, contentDigestHeader)) {
         sendJson(res, 401, { error: "invalid content digest" });
+        return;
+      }
+
+      const dateHeader = getSingleHeaderValue(req.headers["date"]);
+      if (!dateHeader || !validateFreshness(dateHeader)) {
+        sendJson(res, 401, { error: "stale date header" });
         return;
       }
 

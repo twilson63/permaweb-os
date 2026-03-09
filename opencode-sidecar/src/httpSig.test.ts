@@ -14,6 +14,7 @@ import {
   computeContentDigest,
   HttpSigAlgorithm,
   validateContentDigest,
+  validateFreshness,
   verifyHttpMessageSignature,
 } from "./httpSig";
 
@@ -106,6 +107,24 @@ test("validates content digest against request body", () => {
   assert.equal(validateContentDigest(body, digest), true);
   assert.equal(validateContentDigest('{"content":"tampered"}', digest), false);
   assert.equal(validateContentDigest(body, "sha-256=:invalid:"), false);
+});
+
+test("rejects date header older than 5 minutes", () => {
+  const staleDate = new Date(Date.now() - 5 * 60 * 1000 - 1_000).toUTCString();
+
+  assert.equal(validateFreshness(staleDate), false);
+});
+
+test("rejects date header in the future", () => {
+  const futureDate = new Date(Date.now() + 1_000).toUTCString();
+
+  assert.equal(validateFreshness(futureDate), false);
+});
+
+test("accepts date header within allowed skew", () => {
+  const recentDate = new Date(Date.now() - 2 * 60 * 1000).toUTCString();
+
+  assert.equal(validateFreshness(recentDate), true);
 });
 
 test("accepts valid RSA HTTP message signature", async () => {

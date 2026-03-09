@@ -110,7 +110,6 @@ test("POST /verify returns 401 for invalid signature", async () => {
   try {
     const host = `127.0.0.1:${sidecarPort}`;
     const signedDate = new Date().toUTCString();
-    const tamperedDate = new Date(Date.now() + 60_000).toUTCString();
     const body = JSON.stringify({ content: "hello" });
     const signedHeaders = await createSignedHeaders({
       wallet,
@@ -123,9 +122,9 @@ test("POST /verify returns 401 for invalid signature", async () => {
     const response = await fetch(`http://${host}/verify`, {
       method: "POST",
       headers: {
-        date: tamperedDate,
+        date: signedDate,
         "content-digest": computeContentDigest(body),
-        signature: signedHeaders.Signature,
+        signature: `${signedHeaders.Signature}tampered`,
         "signature-input": signedHeaders["Signature-Input"],
         "content-type": "application/json",
       },
