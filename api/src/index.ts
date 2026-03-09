@@ -233,8 +233,13 @@ export const createApp = (
       return;
     }
 
-    const pod = store.create(getSessionAddress(res), req.body, modelSelection);
-    res.status(201).json(pod);
+    try {
+      const pod = store.create(getSessionAddress(res), req.body, modelSelection);
+      res.status(201).json(pod);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create pod";
+      res.status(400).json({ error: message });
+    }
   });
 
   /**

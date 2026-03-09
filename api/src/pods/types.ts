@@ -27,6 +27,7 @@ export interface Pod {
   ownerWallet: string;
   createdAt: string;
   llm: PodLlmConfig;
+  llmSecretName: string;
 }
 
 /**

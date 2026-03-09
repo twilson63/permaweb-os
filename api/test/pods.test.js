@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
 const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 const { tmpdir } = require("node:os");
@@ -11,12 +12,13 @@ const { PodStore } = require("../dist/pods/store.js");
 const { UsageStore } = require("../dist/usage/store.js");
 
 const startTestServer = async ({
+  podStore,
   authStore = new AuthStore(),
   llmSecretStore = new LlmSecretStore(),
   usageStore = new UsageStore(),
   appOptions
 } = {}) => {
-  const store = new PodStore();
+  const store = podStore || new PodStore();
   const app = createApp(store, authStore, llmSecretStore, usageStore, appOptions);
 
   return new Promise((resolve) => {
@@ -30,6 +32,11 @@ const startTestServer = async ({
       });
     });
   });
+};
+
+const walletSecretName = (address) => {
+  const hash = createHash("sha256").update(address.trim().toLowerCase()).digest("hex").slice(0, 16);
+  return `llm-keys-${hash}`;
 };
 
 const withGitHubOAuthEnv = async (fn) => {
@@ -131,6 +138,95 @@ test("POST /api/pods creates a pod and binds owner wallet", async () => {
     assert.equal(typeof payload.subdomain, "string");
     assert.match(payload.subdomain, /pods\.local$/);
     assert.equal(payload.ownerWallet, wallet.address);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/pods binds wallet-scoped LLM secret when available", async () => {
+  const podStore = new PodStore({
+    secretExists: (secretName) => secretName.startsWith("llm-keys-")
+  });
+  const server = await startTestServer({ podStore });
+
+  try {
+    const { session, wallet } = await createSession(server);
+    const response = await createPod(server, session, "alpha");
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.llmSecretName, walletSecretName(wallet.address));
+    assert.match(payload.llmSecretName, /^llm-keys-[a-f0-9]{16}$/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/pods isolates wallet secret names by owner", async () => {
+  const podStore = new PodStore({
+    secretExists: (secretName) => secretName.startsWith("llm-keys-")
+  });
+  const server = await startTestServer({ podStore });
+
+  try {
+    const { session, wallet } = await createSession(server);
+    const { session: otherSession, wallet: otherWallet } = await createSession(server);
+    const firstCreate = await createPod(server, session, "alpha");
+    const secondCreate = await createPod(server, otherSession, "beta");
+
+    assert.equal(firstCreate.status, 201);
+    assert.equal(secondCreate.status, 201);
+
+    const firstPod = await firstCreate.json();
+    const secondPod = await secondCreate.json();
+    assert.equal(firstPod.llmSecretName, walletSecretName(wallet.address));
+    assert.equal(secondPod.llmSecretName, walletSecretName(otherWallet.address));
+    assert.notEqual(firstPod.llmSecretName, secondPod.llmSecretName);
+
+    const firstList = await fetch(`${server.baseUrl}/api/pods`, {
+      headers: { authorization: `Bearer ${session.token}` }
+    });
+    assert.equal(firstList.status, 200);
+    const listPayload = await firstList.json();
+    assert.equal(listPayload.pods.length, 1);
+    assert.equal(listPayload.pods[0].llmSecretName, firstPod.llmSecretName);
+    assert.notEqual(listPayload.pods[0].llmSecretName, secondPod.llmSecretName);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/pods falls back to global secret for compatibility", async () => {
+  const podStore = new PodStore({
+    secretExists: (secretName) => secretName === "llm-api-keys"
+  });
+  const server = await startTestServer({ podStore });
+
+  try {
+    const { session } = await createSession(server);
+    const response = await createPod(server, session, "alpha");
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.llmSecretName, "llm-api-keys");
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/pods returns 400 when no wallet or global secret exists", async () => {
+  const podStore = new PodStore({
+    secretExists: () => false
+  });
+  const server = await startTestServer({ podStore });
+
+  try {
+    const { session } = await createSession(server);
+    const response = await createPod(server, session, "alpha");
+
+    assert.equal(response.status, 400);
+    const payload = await response.json();
+    assert.match(payload.error, /No LLM secret available/);
   } finally {
     await server.close();
   }

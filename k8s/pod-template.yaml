@@ -19,7 +19,7 @@ spec:
       emptyDir: {}
     - name: llm-secrets
       secret:
-        secretName: llm-api-keys
+        secretName: {{LLM_SECRET_NAME}}
   containers:
     - name: opencode
       image: docker.io/library/web-os-opencode:latest
