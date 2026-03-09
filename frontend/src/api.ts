@@ -1,6 +1,13 @@
 import { signatureHeaders, type RequestLike, type Signer } from "http-message-sig";
 import { authStore } from "./auth/store";
 
+/**
+ * Frontend API client utilities used by the React application.
+ */
+
+/**
+ * Pod entity shape returned by backend endpoints.
+ */
 export interface Pod {
   id: string;
   name: string;
@@ -14,28 +21,49 @@ export interface Pod {
   };
 }
 
+/**
+ * Request payload accepted by the pod creation endpoint.
+ */
 export interface CreatePodInput {
   model?: string;
 }
 
+/**
+ * Wallet challenge payload returned before signature verification.
+ */
 export interface WalletAuthChallenge {
   message: string;
   nonce: string;
 }
 
+/**
+ * Session payload returned after wallet signature verification.
+ */
 export interface WalletAuthSession {
   token: string;
   expiresAt: string;
 }
 
+/**
+ * Wallet provider methods required for HTTP signature and auth flows.
+ */
 export interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
 }
 
+/**
+ * Response shape for the pod list endpoint.
+ */
 interface ListPodsResponse {
   pods: Pod[];
 }
 
+/**
+ * Parses API error responses into a user-facing message.
+ *
+ * @param response - Failed fetch response.
+ * @returns API-provided message or fallback status text.
+ */
 const parseError = async (response: Response): Promise<string> => {
   try {
     const payload = (await response.json()) as { error?: string };
@@ -45,6 +73,13 @@ const parseError = async (response: Response): Promise<string> => {
   }
 };
 
+/**
+ * Converts a hex-encoded wallet signature into raw bytes.
+ *
+ * @param signatureHex - Signature string from wallet providers.
+ * @returns Signature bytes.
+ * @throws {Error} If the input is not valid even-length hex.
+ */
 function signatureHexToBytes(signatureHex: string): Uint8Array {
   const normalized = signatureHex.startsWith("0x") ? signatureHex.slice(2) : signatureHex;
 
@@ -62,6 +97,12 @@ function signatureHexToBytes(signatureHex: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Converts Fetch headers into a plain string map.
+ *
+ * @param headers - Headers object.
+ * @returns Plain object keyed by header names.
+ */
 function toHeaderRecord(headers: Headers): Record<string, string> {
   const record: Record<string, string> = {};
 
@@ -72,6 +113,12 @@ function toHeaderRecord(headers: Headers): Record<string, string> {
   return record;
 }
 
+/**
+ * Builds HTTP Message Signature headers using an Ethereum wallet signer.
+ *
+ * @param input - Signature construction parameters.
+ * @returns Headers including `Signature` and `Signature-Input`.
+ */
 async function createHttpSigHeaders(input: {
   provider: EthereumProvider;
   address: string;
@@ -124,6 +171,15 @@ async function createHttpSigHeaders(input: {
   return headers;
 }
 
+/**
+ * Executes a fetch request signed with HTTP Message Signatures.
+ *
+ * @param provider - Browser Ethereum provider used to sign the request.
+ * @param address - Wallet address used as signer key id.
+ * @param requestUrl - Request URL to fetch.
+ * @param init - Optional fetch init options.
+ * @returns Fetch response.
+ */
 export async function podFetchWithHttpSig(
   provider: EthereumProvider,
   address: string,
@@ -146,6 +202,11 @@ export async function podFetchWithHttpSig(
   });
 }
 
+/**
+ * Returns bearer auth headers for the current wallet session.
+ *
+ * @returns Authorization headers when a session token exists.
+ */
 const getAuthHeaders = (): HeadersInit => {
   const token = authStore.getSession()?.token;
 
@@ -158,6 +219,11 @@ const getAuthHeaders = (): HeadersInit => {
   };
 };
 
+/**
+ * Retrieves all pods visible to the authenticated wallet.
+ *
+ * @returns Pod records.
+ */
 export const listPods = async (): Promise<Pod[]> => {
   const response = await fetch("/api/pods", {
     headers: {
@@ -173,6 +239,12 @@ export const listPods = async (): Promise<Pod[]> => {
   return payload.pods;
 };
 
+/**
+ * Creates a new pod for the authenticated wallet.
+ *
+ * @param input - Pod creation payload.
+ * @returns Created pod.
+ */
 export const createPod = async (input: CreatePodInput = {}): Promise<Pod> => {
   const response = await fetch("/api/pods", {
     method: "POST",
@@ -190,6 +262,11 @@ export const createPod = async (input: CreatePodInput = {}): Promise<Pod> => {
   return (await response.json()) as Pod;
 };
 
+/**
+ * Deletes a pod by identifier.
+ *
+ * @param id - Pod ID.
+ */
 export const deletePod = async (id: string): Promise<void> => {
   const response = await fetch(`/api/pods/${id}`, {
     method: "DELETE",
@@ -203,6 +280,12 @@ export const deletePod = async (id: string): Promise<void> => {
   }
 };
 
+/**
+ * Requests a wallet signature challenge from the API.
+ *
+ * @param address - Wallet address requesting login.
+ * @returns Challenge message and nonce.
+ */
 export const requestWalletChallenge = async (address: string): Promise<WalletAuthChallenge> => {
   const response = await fetch("/api/auth/nonce", {
     method: "POST",
@@ -219,6 +302,13 @@ export const requestWalletChallenge = async (address: string): Promise<WalletAut
   return (await response.json()) as WalletAuthChallenge;
 };
 
+/**
+ * Verifies a signed challenge and returns an authenticated session.
+ *
+ * @param address - Wallet address that signed the challenge.
+ * @param signature - Signature produced by wallet `personal_sign`.
+ * @returns Session token and expiry.
+ */
 export const verifyWalletSignature = async (
   address: string,
   signature: string

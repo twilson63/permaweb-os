@@ -9,14 +9,27 @@ import {
 } from "./api";
 import { authStore } from "./auth/store";
 
+/**
+ * Main frontend screen for wallet authentication and pod lifecycle management.
+ */
+
+/**
+ * Minimal browser wallet interface used by this page.
+ */
 interface EthereumProvider {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
 }
 
+/**
+ * Window extension for Ethereum-injected browser wallets (for example MetaMask).
+ */
 interface WindowWithEthereum extends Window {
   ethereum?: EthereumProvider;
 }
 
+/**
+ * Static list of LLM models offered in the create pod dialog.
+ */
 const SUPPORTED_MODELS = [
   "openai/gpt-4.1-mini",
   "openai/gpt-4o-mini",
@@ -24,11 +37,22 @@ const SUPPORTED_MODELS = [
   "anthropic/claude-3-7-sonnet"
 ];
 
+/**
+ * Formats ISO dates for human-readable rendering.
+ *
+ * @param value - ISO date string.
+ * @returns Locale-formatted date string, or original value if invalid.
+ */
 const formatDate = (value: string): string => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 };
 
+/**
+ * Root React application component.
+ *
+ * Coordinates wallet auth, session state, and pod CRUD flows.
+ */
 const App = () => {
   const initialSession = authStore.getSession();
   const [pods, setPods] = useState<Pod[]>([]);
@@ -47,6 +71,9 @@ const App = () => {
     [pods.length]
   );
 
+  /**
+   * Reloads pod data from the API while handling unauthorized sessions.
+   */
   const refreshPods = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -67,6 +94,9 @@ const App = () => {
     }
   }, []);
 
+  /**
+   * Compact wallet button label that shows connection state.
+   */
   const walletLabel = useMemo(() => {
     if (!walletAddress) {
       return "Connect Wallet";
@@ -75,6 +105,9 @@ const App = () => {
     return `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
   }, [walletAddress]);
 
+  /**
+   * User-facing session expiry text for the header.
+   */
   const sessionLabel = useMemo(() => {
     if (!sessionExpiresAt) {
       return null;
@@ -83,10 +116,16 @@ const App = () => {
     return `Session active until ${formatDate(sessionExpiresAt)}`;
   }, [sessionExpiresAt]);
 
+  /**
+   * Initial pod fetch on mount.
+   */
   useEffect(() => {
     void refreshPods();
   }, [refreshPods]);
 
+  /**
+   * Creates a pod using the currently selected model.
+   */
   const onCreate = async () => {
     setCreating(true);
     setError(null);
@@ -103,6 +142,11 @@ const App = () => {
     }
   };
 
+  /**
+   * Deletes a pod and optimistically updates local state.
+   *
+   * @param id - Pod identifier to delete.
+   */
   const onDelete = async (id: string) => {
     setDeletingId(id);
     setError(null);
@@ -118,6 +162,9 @@ const App = () => {
     }
   };
 
+  /**
+   * Connects an Ethereum wallet and completes challenge/response login.
+   */
   const onConnectWallet = async () => {
     setConnectingWallet(true);
     setError(null);
@@ -135,6 +182,7 @@ const App = () => {
         throw new Error("Wallet did not return an account");
       }
 
+      /** Use the first selected account as the active wallet identity. */
       const address = accountsResponse[0];
       const challenge = await requestWalletChallenge(address);
       const signatureResponse = await browserWindow.ethereum.request({

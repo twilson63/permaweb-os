@@ -1,3 +1,9 @@
+/**
+ * @fileoverview Express API composition for auth, pods, usage, and provider discovery.
+ * @author Web OS contributors
+ * @exports createApp
+ */
+
 import express from "express";
 import { randomBytes } from "crypto";
 import { Response } from "express";
@@ -13,6 +19,23 @@ import { LlmSecretStore } from "./llm/secretStore";
 import { PodStore } from "./pods/store";
 import { UsageStore } from "./usage/store";
 
+/**
+ * API server entry point.
+ *
+ * This module wires authentication, pod lifecycle, usage accounting, and GitHub
+ * OAuth endpoints into a single Express app instance.
+ */
+
+/**
+ * Creates the API application with injectable stores and OAuth exchange helper.
+ *
+ * @param store - Pod persistence store.
+ * @param authStore - Authentication challenge/session store.
+ * @param llmSecretStore - Provider secret discovery store.
+ * @param usageStore - Usage tracking store.
+ * @param exchangeGitHubCode - Injectable GitHub code exchange implementation.
+ * @returns Configured Express application.
+ */
 export const createApp = (
   store: PodStore = new PodStore(),
   authStore: AuthStore = new AuthStore(),
@@ -30,12 +53,19 @@ export const createApp = (
   } = {}
 ) => {
   const app = express();
+  /**
+   * One-time OAuth state map used for CSRF protection during GitHub connect.
+   * Values expire after 10 minutes and are removed after callback handling.
+   */
   const githubOAuthStates = new Map<string, { sessionToken: string; expiresAtMs: number }>();
 
   app.use(express.json());
 
   const requireSession = createSessionAuthMiddleware(authStore);
 
+  /**
+   * Issues a wallet signature challenge to begin session authentication.
+   */
   app.post("/api/auth/nonce", (req, res) => {
     const address = typeof req.body?.address === "string" ? req.body.address : "";
 
@@ -53,6 +83,9 @@ export const createApp = (
     }
   });
 
+  /**
+   * Verifies a signed wallet challenge and returns a bearer session token.
+   */
   app.post("/api/auth/verify", (req, res) => {
     const address = typeof req.body?.address === "string" ? req.body.address : "";
     const signature = typeof req.body?.signature === "string" ? req.body.signature : "";
@@ -77,6 +110,10 @@ export const createApp = (
     }
   });
 
+  /**
+   * Starts GitHub OAuth by creating a short-lived state token and redirecting
+   * the authenticated user to GitHub's authorization page.
+   */
   app.get("/api/auth/github", requireSession, (req, res: Response<unknown, SessionLocals>) => {
     const oauthConfig = getGitHubOAuthConfig();
 
@@ -104,6 +141,10 @@ export const createApp = (
     res.redirect(authorizeUrl);
   });
 
+  /**
+   * Handles GitHub OAuth callback by validating state and exchanging the
+   * temporary authorization code for an access token.
+   */
   app.get("/api/auth/github/callback", async (req, res) => {
     const oauthConfig = getGitHubOAuthConfig();
 
@@ -168,10 +209,19 @@ export const createApp = (
     }
   });
 
+  /**
+   * Gets the wallet address from authenticated response locals.
+   *
+   * @param res - Express response carrying session locals.
+   * @returns Authenticated wallet address.
+   */
   const getSessionAddress = (res: Response<unknown, SessionLocals>): string => {
     return res.locals.session.address;
   };
 
+  /**
+   * Creates a pod for the authenticated wallet owner.
+   */
   app.post("/api/pods", requireSession, (req, res: Response<unknown, SessionLocals>) => {
     const modelSelection = resolveModelSelection(req.body?.model);
 
@@ -187,14 +237,23 @@ export const createApp = (
     res.status(201).json(pod);
   });
 
+  /**
+   * Lists pods owned by the authenticated wallet.
+   */
   app.get("/api/pods", requireSession, (_req, res: Response<unknown, SessionLocals>) => {
     res.json({ pods: store.list(getSessionAddress(res)) });
   });
 
+  /**
+   * Lists LLM providers that currently have configured API keys.
+   */
   app.get("/api/llm/providers", requireSession, (_req, res: Response<unknown, SessionLocals>) => {
     res.json({ providers: llmSecretStore.listConfiguredProviders() });
   });
 
+  /**
+   * Records token usage and cost data for an authenticated wallet.
+   */
   app.post("/api/usage", requireSession, (req, res: Response<unknown, SessionLocals>) => {
     const model = typeof req.body?.model === "string" ? req.body.model : "";
     const promptTokens = req.body?.promptTokens;
@@ -226,6 +285,9 @@ export const createApp = (
     }
   });
 
+  /**
+   * Returns usage summary and raw records for an authenticated wallet.
+   */
   app.get("/api/usage", requireSession, (_req, res: Response<unknown, SessionLocals>) => {
     const ownerWallet = getSessionAddress(res);
     res.json({
@@ -234,6 +296,9 @@ export const createApp = (
     });
   });
 
+  /**
+   * Returns one pod after verifying ownership.
+   */
   app.get("/api/pods/:id", requireSession, (req, res: Response<unknown, SessionLocals>) => {
     const pod = store.get(req.params.id);
 
@@ -250,6 +315,9 @@ export const createApp = (
     res.json(pod);
   });
 
+  /**
+   * Deletes one pod after verifying ownership.
+   */
   app.delete("/api/pods/:id", requireSession, (req, res: Response<unknown, SessionLocals>) => {
     const pod = store.get(req.params.id);
 
@@ -273,6 +341,9 @@ export const createApp = (
     res.status(204).send();
   });
 
+  /**
+   * Simple health probe endpoint.
+   */
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
@@ -280,9 +351,15 @@ export const createApp = (
   return app;
 };
 
+/**
+ * Default application instance used in local runtime mode.
+ */
 const app = createApp();
 const port = Number(process.env.PORT) || 3000;
 
+/**
+ * Starts the HTTP listener when this file is executed directly.
+ */
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`api listening on port ${port}`);

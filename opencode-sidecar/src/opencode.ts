@@ -1,8 +1,18 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 
+/**
+ * Reverse-proxy helpers used to forward requests to a local OpenCode daemon.
+ */
+
+/**
+ * Base URL of the upstream OpenCode server.
+ */
 const defaultOpenCodeBaseUrl = process.env.OPENCODE_BASE_URL ?? "http://127.0.0.1:4096";
 
+/**
+ * Request headers that should never be forwarded by proxies.
+ */
 const hopByHopRequestHeaders = new Set([
   "connection",
   "keep-alive",
@@ -16,6 +26,9 @@ const hopByHopRequestHeaders = new Set([
   "content-length",
 ]);
 
+/**
+ * Response headers stripped before relaying back to clients.
+ */
 const hopByHopResponseHeaders = new Set([
   "connection",
   "keep-alive",
@@ -27,6 +40,13 @@ const hopByHopResponseHeaders = new Set([
   "upgrade",
 ]);
 
+/**
+ * Converts Node request headers into Fetch API headers while removing
+ * hop-by-hop entries and transport-managed headers.
+ *
+ * @param req - Incoming Node HTTP request.
+ * @returns Sanitized fetch-compatible headers.
+ */
 function toRequestHeaders(req: IncomingMessage): Headers {
   const headers = new Headers();
 
@@ -48,6 +68,12 @@ function toRequestHeaders(req: IncomingMessage): Headers {
   return headers;
 }
 
+/**
+ * Copies upstream response headers/status onto the downstream response.
+ *
+ * @param res - Outgoing Node response.
+ * @param upstreamResponse - Response received from upstream fetch call.
+ */
 function writeResponseHeaders(res: ServerResponse, upstreamResponse: Response): void {
   for (const [name, value] of upstreamResponse.headers.entries()) {
     if (hopByHopResponseHeaders.has(name)) {
@@ -61,6 +87,12 @@ function writeResponseHeaders(res: ServerResponse, upstreamResponse: Response): 
   res.statusMessage = upstreamResponse.statusText;
 }
 
+/**
+ * Reads and buffers an incoming request body.
+ *
+ * @param req - Incoming Node HTTP request.
+ * @returns Full body as a Buffer.
+ */
 async function readRequestBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
 
@@ -71,12 +103,20 @@ async function readRequestBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+/**
+ * Options used when forwarding one request to OpenCode.
+ */
 export interface ForwardRequestOptions {
   req: IncomingMessage;
   res: ServerResponse;
   openCodeBaseUrl?: string;
 }
 
+/**
+ * Forwards the incoming request to OpenCode and streams the response back.
+ *
+ * @param options - Forwarding request/response context.
+ */
 export async function forwardRequestToOpenCode(options: ForwardRequestOptions): Promise<void> {
   const { req, res } = options;
   const openCodeBaseUrl = options.openCodeBaseUrl ?? defaultOpenCodeBaseUrl;

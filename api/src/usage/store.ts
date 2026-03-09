@@ -4,25 +4,51 @@ import { randomUUID } from "crypto";
 import { calculateModelCostUsd, resolveModelSelection } from "../llm/modelRegistry";
 import { CreateUsageInput, UsageRecord, UsageSummary } from "./types";
 
+/**
+ * On-disk store shape for usage persistence.
+ */
 interface UsageStoreState {
   records: UsageRecord[];
 }
 
+/**
+ * Default JSON file used when no explicit usage store path is provided.
+ */
 const DEFAULT_USAGE_STORE_PATH = process.env.USAGE_STORE_PATH || "./data/usage-store.json";
 
+/**
+ * Validates token counts accepted by usage accounting.
+ *
+ * @param value - Candidate token count.
+ * @returns `true` when value is a non-negative integer.
+ */
 const isValidTokenCount = (value: unknown): value is number => {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 };
 
+/**
+ * Persistent usage store for token/cost accounting by wallet owner.
+ */
 export class UsageStore {
   private readonly records: UsageRecord[];
   private readonly filePath: string;
 
+  /**
+   * @param filePath - JSON file path used to persist usage state.
+   */
   constructor(filePath: string = DEFAULT_USAGE_STORE_PATH) {
     this.filePath = filePath;
     this.records = this.readState().records;
   }
 
+  /**
+   * Creates and persists a usage record for one request.
+   *
+   * @param ownerWallet - Wallet address that owns this usage.
+   * @param input - Token counts and model submitted by caller.
+   * @returns Stored usage record.
+   * @throws {Error} For invalid token counts, unknown models, or missing pricing.
+   */
   create(ownerWallet: string, input: CreateUsageInput): UsageRecord {
     if (!isValidTokenCount(input.promptTokens) || !isValidTokenCount(input.completionTokens)) {
       throw new Error("Usage tokens must be non-negative integers");
@@ -56,10 +82,22 @@ export class UsageStore {
     return record;
   }
 
+  /**
+   * Lists all usage records for an owner wallet.
+   *
+   * @param ownerWallet - Wallet address filter.
+   * @returns Matching usage records.
+   */
   list(ownerWallet: string): UsageRecord[] {
     return this.records.filter((record) => record.ownerWallet === ownerWallet);
   }
 
+  /**
+   * Builds a token and cost summary for an owner wallet.
+   *
+   * @param ownerWallet - Wallet address filter.
+   * @returns Aggregated usage totals.
+   */
   summarize(ownerWallet: string): UsageSummary {
     const records = this.list(ownerWallet);
     const promptTokens = records.reduce((sum, record) => sum + record.promptTokens, 0);
@@ -77,6 +115,13 @@ export class UsageStore {
     };
   }
 
+  /**
+   * Reads usage state from disk and sanitizes unknown content.
+   *
+   * Any malformed file content gracefully falls back to an empty record set.
+   *
+   * @returns Parsed and validated usage state.
+   */
   private readState(): UsageStoreState {
     try {
       const raw = readFileSync(this.filePath, "utf-8");
@@ -116,6 +161,9 @@ export class UsageStore {
     }
   }
 
+  /**
+   * Persists the current in-memory usage state to disk.
+   */
   private writeState(): void {
     mkdirSync(dirname(this.filePath), { recursive: true });
     writeFileSync(this.filePath, JSON.stringify({ records: this.records }, null, 2), "utf-8");

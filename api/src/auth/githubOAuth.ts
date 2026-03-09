@@ -1,8 +1,29 @@
+/**
+ * @fileoverview GitHub OAuth helpers for config, authorization URL generation, and token exchange.
+ * @author Web OS contributors
+ * @exports getGitHubOAuthConfig, buildGitHubAuthorizeUrl, exchangeGitHubCodeForToken
+ */
+
+/**
+ * Utilities for the GitHub OAuth web application flow.
+ *
+ * Exports helpers to read configuration, build authorize URLs, and exchange
+ * authorization codes for access tokens.
+ */
+
+/**
+ * Required GitHub OAuth client credentials.
+ */
 export interface GitHubOAuthConfig {
   clientId: string;
   clientSecret: string;
 }
 
+/**
+ * Reads GitHub OAuth credentials from environment variables.
+ *
+ * @returns Client configuration when fully configured; otherwise `null`.
+ */
 export const getGitHubOAuthConfig = (): GitHubOAuthConfig | null => {
   const clientId = process.env.GITHUB_CLIENT_ID?.trim() || "";
   const clientSecret = process.env.GITHUB_CLIENT_SECRET?.trim() || "";
@@ -17,6 +38,14 @@ export const getGitHubOAuthConfig = (): GitHubOAuthConfig | null => {
   };
 };
 
+/**
+ * Builds the redirect URL used to start the GitHub OAuth authorization flow.
+ *
+ * @param clientId - OAuth app client ID.
+ * @param redirectUri - Callback URI registered for the OAuth app.
+ * @param state - CSRF protection state token.
+ * @returns Full GitHub authorization URL with query parameters.
+ */
 export const buildGitHubAuthorizeUrl = ({
   clientId,
   redirectUri,
@@ -37,6 +66,15 @@ export const buildGitHubAuthorizeUrl = ({
   return `https://github.com/login/oauth/authorize?${params.toString()}`;
 };
 
+/**
+ * Exchanges a GitHub OAuth authorization code for an access token.
+ *
+ * @param clientId - OAuth app client ID.
+ * @param clientSecret - OAuth app client secret.
+ * @param code - Authorization code from callback query params.
+ * @param redirectUri - Callback URI used for the authorization request.
+ * @returns Access token string when successful, otherwise `null`.
+ */
 export const exchangeGitHubCodeForToken = async ({
   clientId,
   clientSecret,
