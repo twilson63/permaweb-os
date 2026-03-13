@@ -53,6 +53,11 @@ Content-Type: application/json
 
 Returns a nonce for wallet signing.
 
+**Request Body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `address` | string | Yes | Wallet address (Ethereum `0x...` or Arweave 43 chars) |
+
 **Response:**
 ```json
 {
@@ -82,11 +87,25 @@ Content-Type: application/json
 
 Verifies wallet signature and returns session token.
 
+**Request Body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `walletAddress` | string | Yes | Wallet address |
+| `signature` | string | Yes | Signed nonce (hex for Ethereum, base64url for Arweave) |
+| `nonce` | string | Yes | Nonce from `/api/auth/nonce` |
+
+**Supported Wallet Types:**
+| Wallet Type | Address Format | Signature Format |
+|------------|----------------|------------------|
+| Ethereum | `0x` + 40 hex chars | `0x` + hex (personal_sign) |
+| Arweave | Base64URL, 43 chars | Base64URL (RSA-PSS-SHA256) |
+
 **Response:**
 ```json
 {
   "sessionToken": "eyJhbGciOiJIUzI1NiIs...",
   "walletAddress": "0xABC123...",
+  "walletType": "ethereum",
   "expiresAt": "2026-03-11T12:00:00Z"
 }
 ```
@@ -248,6 +267,123 @@ Deletes a pod.
 
 ---
 
+### LLM Key Management (Wallet-Scoped)
+
+Each wallet has its own LLM API keys stored in isolated Kubernetes secrets. These endpoints allow wallet owners to manage their keys.
+
+#### Register LLM Key
+
+```http
+POST /api/llm/keys
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "provider": "openai",
+  "apiKey": "sk-proj-abc123..."
+}
+```
+
+Registers or updates an API key for a specific LLM provider.
+
+**Request Body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | string | Yes | LLM provider (`openai`, `anthropic`, `groq`) |
+| `apiKey` | string | Yes | API key value (will be stored securely) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "provider": "openai",
+  "createdAt": "2026-03-11T10:30:00Z"
+}
+```
+
+**Status Codes:**
+- `200` — Key registered successfully
+- `401` — Unauthorized
+- `400` — Invalid provider or key format
+
+---
+
+#### List Configured Providers
+
+```http
+GET /api/llm/keys
+Authorization: Bearer <token>
+```
+
+Lists all LLM providers that have keys configured for the authenticated wallet.
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "configured": true,
+      "models": [
+        { "id": "gpt-4", "name": "GPT-4" },
+        { "id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo" }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "configured": true,
+      "models": [
+        { "id": "claude-3-5-haiku", "name": "Claude 3.5 Haiku" },
+        { "id": "claude-3-opus", "name": "Claude 3 Opus" }
+      ]
+    },
+    {
+      "id": "groq",
+      "name": "Groq",
+      "configured": false,
+      "models": [...]
+    }
+  ]
+}
+```
+
+**Status Codes:**
+- `200` — Success
+- `401` — Unauthorized
+
+---
+
+#### Remove LLM Key
+
+```http
+DELETE /api/llm/keys/:provider
+Authorization: Bearer <token>
+```
+
+Removes the API key for a specific provider.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `provider` | string | LLM provider (`openai`, `anthropic`, `groq`) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "provider": "openai"
+}
+```
+
+**Status Codes:**
+- `200` — Key removed successfully
+- `401` — Unauthorized
+- `404` — Provider not configured
+
+---
+
 ### LLM Providers
 
 #### List Providers
@@ -257,7 +393,7 @@ GET /api/llm/providers
 Authorization: Bearer <token>
 ```
 
-Lists available LLM providers.
+Lists available LLM providers and their models.
 
 **Response:**
 ```json
@@ -404,3 +540,4 @@ All errors follow this format:
 - [JSONL Events](/jsonl-events) — Event type reference
 - [HTTPSig Signing](/http-sig) — Request signing details
 - [Frontend Guide](/frontend-quickstart) — Build your first app
+- [Security Model](/security-model) — Multi-tenant isolation

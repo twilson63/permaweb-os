@@ -1,0 +1,307 @@
+# Scaling Strategy
+
+This document outlines the scaling strategy for Permaweb OS deployments.
+
+## Overview
+
+Permaweb OS scales at multiple levels:
+
+1. **Vertical Scaling** — Upgrading node sizes
+2. **Horizontal Scaling** — Adding more nodes
+3. **Pod Autoscaling** — HPA for API pods, dynamic user pod management
+4. **Cost Optimization** — Spot instances, reserved capacity, right-sizing
+
+---
+
+## Cost Analysis
+
+### Per-Pod Resource Footprint
+
+Each user pod has the following resources:
+
+| Resource | Request | Limit | Description |
+|----------|---------|-------|-------------|
+| CPU | 350m | 1 core | OpenCode + sidecar |
+| Memory | 640Mi | 2Gi | Container memory |
+
+### Monthly Cost Per Pod
+
+Based on DigitalOcean pricing:
+
+| Node Type | Cost/Month | Pods/Node | Cost/Pod/Month |
+|-----------|------------|-----------|----------------|
+| s-4vcpu-8gb | $48 | 8 | $6.00 |
+| c-4vcpu-8gb | $72 | 10 | **$7.20** |
+| c-8vcpu-16gb | $144 | 20 | $7.20 |
+
+**Recommended**: CPU-optimized nodes (`c-*`) for better performance at similar cost/pod.
+
+---
+
+## Horizontal Pod Autoscaler
+
+The API deployment uses HPA for automatic scaling:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+  namespace: web-os
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+```
+
+### HPA Thresholds
+
+| Metric | Threshold | Behavior |
+|--------|-----------|----------|
+| CPU > 70% | Scale up | Add API pods (up to 10) |
+| Memory > 80% | Scale up | Add API pods (up to 10) |
+| Scale up stabilization | 60s | Prevent rapid fluctuation |
+| Scale down stabilization | 300s (5m) | Prevent thrashing |
+
+---
+
+## Cluster Autoscaling
+
+For node-level scaling, use Cluster Autoscaler:
+
+```bash
+# Install cluster-autoscaler
+helm repo add autoscaler https://kubernetes.github.io/autoscaler
+helm install cluster-autoscaler autoscaler/cluster-autoscaler \
+  --namespace kube-system \
+  --set autoDiscovery.clusterName=web-os \
+  --set extraArgs.scan-interval=30s
+```
+
+### Node Pool Recommendations
+
+| Concurrent Users | Min Nodes | Max Nodes | Node Type | Rationale |
+|------------------|-----------|-----------|-----------|-----------|
+| 1-10 | 2 | 5 | c-4vcpu-8gb | Development + HA |
+| 11-50 | 3 | 10 | c-4vcpu-8gb | Small production |
+| 51-200 | 5 | 15 | c-8vcpu-16gb | Medium production |
+| 201-500 | 10 | 30 | c-8vcpu-16gb | Growth stage |
+| 501+ | 15 | 50+ | c-8vcpu-16gb | Scale stage |
+
+### HA Considerations
+
+- **Minimum 2 nodes** for any production deployment
+- **Spread across availability zones** for critical workloads
+- **Cluster Autoscaler** handles dynamic scaling within min/max bounds
+
+---
+
+## Vertical Scaling
+
+When to upgrade node sizes:
+
+1. **Single pod resource needs increase** — OpenCode requires more CPU/memory
+2. **Oversubscription problems** — CPU throttling or memory pressure
+3. **Performance degradation** — Latency increases due to contention
+
+### Upgrade Paths
+
+```
+s-4vcpu-8gb ($48/mo, 8 pods) → c-4vcpu-8gb ($72/mo, 10 pods)
+c-4vcpu-8gb ($72/mo, 10 pods) → c-8vcpu-16gb ($144/mo, 20 pods)
+```
+
+### Scaling Triggers
+
+| Metric | Threshold | Action |
+|--------|-----------|--------|
+| Node CPU utilization | greater than 85% sustained | Upgrade to larger nodes |
+| Node memory pressure | greater than 90% sustained | Consider memory-optimized tier |
+| Pod scheduling failures | greater than 5% pending | Add nodes (horizontal) OR upgrade |
+| P99 latency increase | greater than 500ms | Investigate resource contention |
+
+---
+
+## User Pod Lifecycle
+
+User pods are NOT managed by HPA. They're created dynamically per user:
+
+| State | Resources | Behavior |
+|-------|-----------|----------|
+| Active | Full (350m CPU, 640Mi) | Normal operation |
+| Idle (30m) | Terminated | Pod deleted, session ended |
+| Peak load | Queue | Users wait for available capacity |
+
+### Cleanup Policy
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-pod-lifecycle
+  namespace: web-os
+data:
+  IDLE_TIMEOUT: "1800"      # 30 minutes
+  MAX_LIFETIME: "28800"     # 8 hours
+  CLEANUP_INTERVAL: "300"   # 5 minutes
+```
+
+---
+
+## Cost Optimization
+
+### Strategy 1: Right-Sizing Pod Requests
+
+| Container | Current Request | Typical Usage | Recommended |
+|-----------|-----------------|--------------|-------------|
+| OpenCode | 250m CPU, 512Mi | 100-200m, 256-512Mi | 200m, 384Mi |
+| HTTPSig | 100m CPU, 128Mi | 10-30m, 32-64Mi | 50m, 64Mi |
+| API | 100m CPU, 128Mi | 50-100m, 64-128Mi | 75m, 96Mi |
+
+**Potential savings:** 25-30% reduction in resource requests.
+
+### Strategy 2: Resource Quotas
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: web-os-quota
+  namespace: web-os
+spec:
+  hard:
+    requests.cpu: "50"
+    requests.memory: 100Gi
+    limits.cpu: "100"
+    limits.memory: 200Gi
+    pods: "100"
+```
+
+### Strategy 3: Pod Priority
+
+```yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: web-os-critical
+value: 1000000
+globalDefault: false
+description: "Critical system pods"
+```
+
+---
+
+## Monitoring & Alerts
+
+### Key Metrics
+
+```
+# Request latency
+http_request_duration_seconds_bucket{method="POST",path="/verify",le="0.1"}
+http_request_duration_seconds_bucket{method="POST",path="/verify",le="0.5"}
+http_request_duration_seconds_bucket{method="POST",path="/verify",le="1.0"}
+
+# Request count
+http_requests_total{method="POST",path="/verify",status="200"}
+
+# Active pods
+webos_pods_active_total{}
+
+# Signature verification
+webos_httpsig_verifications_total{status="success"}
+webos_httpsig_verifications_total{status="failed"}
+```
+
+### Prometheus Alerts
+
+```yaml
+groups:
+  - name: scaling-alerts
+    rules:
+      - alert: HighCPUUtilization
+        expr: avg(rate(container_cpu_usage_seconds_total{namespace="web-os"}[5m])) > 0.7
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU utilization - consider scaling"
+      
+      - alert: HighMemoryUtilization
+        expr: avg(container_memory_usage_bytes{namespace="web-os"}) / avg(container_spec_memory_limit_bytes{namespace="web-os"}) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+      
+      - alert: PendingPods
+        expr: sum(kube_pod_status_phase{phase="Pending", namespace="web-os"}) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pods pending - cluster needs more capacity"
+```
+
+---
+
+## Decision Matrix
+
+| Signal | Action | Automation |
+|--------|--------|------------|
+| CPU greater than 70% sustained | Scale up API pods | HPA (automatic) |
+| API pods at max (10) | Scale up nodes | Cluster Autoscaler |
+| Node pool at max | Add more nodes | Manual + alert |
+| Memory pressure greater than 90% | Upgrade node size | Manual + alert |
+| Pending pods greater than 0 for 5m | Add nodes | Cluster Autoscaler |
+| Less than 50% capacity for 30m | Scale down nodes | Cluster Autoscaler |
+| Pod idle greater than 30m | Terminate pod | API logic |
+
+---
+
+## Implementation Checklist
+
+### Initial Deployment
+
+- [ ] Create cluster with 3 nodes (c-4vcpu-8gb recommended)
+- [ ] Set up HPA for API
+- [ ] Configure resource quotas
+- [ ] Set up monitoring (Prometheus/Grafana)
+- [ ] Create scaling alerts
+
+### Scaling Up
+
+- [ ] Monitor resource utilization for 1 week
+- [ ] Analyze actual vs requested resources
+- [ ] Right-size pod requests if needed
+- [ ] Add nodes when pending pods appear
+- [ ] Update min/max in cluster autoscaler
+
+### Cost Optimization
+
+- [ ] Review pod requests monthly
+- [ ] Set up billing alerts
+- [ ] Analyze cost per user monthly
+- [ ] Consider reserved capacity for stable workloads
+
+---
+
+## What's Next?
+
+- [Architecture Overview](/architecture) — Metrics and HPA configuration
+- [Security Model](/security-model) — Multi-tenant isolation
+- [Cluster Setup](/cluster-setup) — Deployment guide

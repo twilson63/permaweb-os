@@ -31,6 +31,10 @@
     "title": "Subdomain Routing",
     "type": "page"
   },
+  "scaling-strategy": {
+    "title": "Scaling Strategy",
+    "type": "page"
+  },
   "-- Guides": {
     "type": "separator",
     "title": "Guides"

@@ -52,14 +52,15 @@ Think of each pod as a personal development server in the cloud:
 │                                                                          │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
 │  │                    Gateway Service                                │    │
-│  │   - Wallet authentication (Arweave, RSA, ECDSA)                  │    │
+│  │   - Wallet authentication (Arweave, Ethereum)                    │    │
 │  │   - Pod lifecycle (create/delete/status) via api.permaweb.live   │    │
 │  │   - Subdomain provisioning (pod-id.permaweb.live)                 │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 │                                                                          │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                    Secret Store                                  │    │
+│  │                    Secret Store (Per-Wallet)                      │    │
 │  │   - LLM API keys (admin-provided, mounted securely)              │    │
+│  │   - Owner verification keys (per-wallet RSA key pairs)           │    │
 │  │   - Wallet → Pod subdomain mapping                                │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 │                                                                          │
@@ -105,6 +106,7 @@ React + Vite application that:
 
 Node.js service (port 3001) that:
 - Verifies HTTPSig signatures (RFC 9421)
+- Supports Ethereum (`eth-personal-sign`) and Arweave (`arweave-rsa-pss-sha256`)
 - Rejects unauthorized requests (401)
 - Forwards valid requests to OpenCode
 - Returns JSONL stream
@@ -155,6 +157,210 @@ Docker image containing:
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
+## Metrics Architecture
+
+The platform exposes Prometheus-compatible metrics for monitoring and autoscaling.
+
+### Metrics Endpoints
+
+| Service | Endpoint | Description |
+|---------|----------|-------------|
+| API Gateway | `/metrics` | Request metrics, pod counts, latency |
+| HTTPSig Sidecar | `/metrics` | Signature verification metrics |
+| OpenCode Pod | `/metrics` | Agent metrics (optional) |
+
+### Key Metrics
+
+```
+# Request latency
+http_request_duration_seconds_bucket{method="POST",path="/verify",le="0.1"}
+http_request_duration_seconds_bucket{method="POST",path="/verify",le="0.5"}
+http_request_duration_seconds_bucket{method="POST",path="/verify",le="1.0"}
+
+# Request count
+http_requests_total{method="POST",path="/verify",status="200"}
+
+# Active pods
+webos_pods_active_total{}
+
+# Signature verification
+webos_httpsig_verifications_total{status="success"}
+webos_httpsig_verifications_total{status="failed"}
+
+# Pod lifecycle
+webos_pods_created_total{}
+webos_pods_deleted_total{}
+webos_pods_errors_total{}
+```
+
+### Prometheus Integration
+
+```yaml
+# prometheus.yml scrape config
+scrape_configs:
+  - job_name: 'web-os-api'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [web-os]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: web-os-api
+    metrics_path: /metrics
+```
+
+---
+
+## Horizontal Pod Autoscaler
+
+The API deployment uses HorizontalPodAutoscaler (HPA) for automatic scaling:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+  namespace: web-os
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    # CPU-based scaling
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Memory-based scaling
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
+```
+
+### HPA Thresholds
+
+| Metric | Threshold | Behavior |
+|--------|-----------|----------|
+| CPU greater than 70% | Scale up | Add API pods (up to max) |
+| Memory greater than 80% | Scale up | Add API pods (up to max) |
+| Scale up stabilization | 60s | Prevent rapid fluctuation |
+| Scale down stabilization | 300s (5m) | Prevent thrashing |
+
+### Custom Metrics (Optional)
+
+For latency-based scaling, enable Prometheus Adapter:
+
+```yaml
+# Requires prometheus-adapter
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa-latency
+  namespace: web-os
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: webos_http_request_duration_seconds
+        target:
+          type: AverageValue
+          averageValue: 500m  # 500ms average response time
+```
+
+---
+
+## Scaling Strategy
+
+### Cost Analysis
+
+Each user pod has the following resource footprint:
+
+| Resource | Request | Limit | Cost (DigitalOcean) |
+|----------|---------|-------|---------------------|
+| CPU | 350m | 1 core | ~$3.60/mo |
+| Memory | 640Mi | 2Gi | ~$3.60/mo |
+| **Total** | — | — | **~$7.20/mo** |
+
+### Recommended Node Types
+
+| Tier | Node Type | Pods/Node | Monthly Cost | Cost/Pod |
+|------|-----------|-----------|--------------|----------|
+| Development | s-4vcpu-8gb | 8 | $48/mo | $6.00 |
+| Production | c-4vcpu-8gb | 10 | $72/mo | $7.20 |
+| High Performance | c-8vcpu-16gb | 20 | $144/mo | $7.20 |
+
+### Scaling Triggers
+
+| Signal | Action | Automation |
+|--------|--------|------------|
+| CPU greater than 70% sustained | Scale up API pods | HPA (automatic) |
+| API pods at max (10) | Scale up nodes | Cluster Autoscaler |
+| Node pool at max | Add more nodes | Manual + alert |
+| Memory pressure greater than 90% | Upgrade node size | Manual + alert |
+| Pending pods greater than 0 for 5m | Add nodes | Cluster Autoscaler |
+| Less than 50% capacity for 30m | Scale down nodes | Cluster Autoscaler |
+| Pod idle greater than 30m | Terminate pod | API logic |
+
+For a detailed scaling strategy with vertical scaling, HA considerations, and cost optimization, see the [Scaling Strategy Document](/scaling-strategy).
+
+### Resource Quotas
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: web-os-quota
+  namespace: web-os
+spec:
+  hard:
+    requests.cpu: "50"
+    requests.memory: 100Gi
+    limits.cpu: "100"
+    limits.memory: 200Gi
+    pods: "100"
+```
+
+---
+
 ## Tech Stack
 
 | Component | Technology |
@@ -164,12 +370,17 @@ Docker image containing:
 | Ingress | NGINX or Traefik |
 | Frontend | Vite + React |
 | Auth | HTTPSig (RFC 9421) |
-| Secrets | K8s Secrets |
+| Secrets | K8s Secrets (per-wallet) |
 | Storage | PVC + Git repositories |
 | Database | PostgreSQL (pod metadata) |
+| Metrics | Prometheus |
+| Autoscaling | HPA + Cluster Autoscaler |
+
+---
 
 ## What's Next?
 
-- [Security Model](/security-model) — HTTPSig and secrets
+- [Security Model](/security-model) — HTTPSig, secrets, and multi-tenant isolation
 - [Subdomain Routing](/subdomain-routing) — DNS and ingress
 - [API Reference](/api-reference) — All endpoints
+- [HTTPSig Signing](/http-sig) — Request signing for both wallet types

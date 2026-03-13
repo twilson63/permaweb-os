@@ -1,0 +1,6 @@
+
+# Docs site build artifacts
+.next/
+out/
+node_modules/
+permaweb-os-docs.zip
