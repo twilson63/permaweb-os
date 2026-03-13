@@ -79,13 +79,25 @@
 
 **Context**: Users need to securely access their personal OpenCode pods. We need an authentication mechanism that is decentralized and works with existing Web3 wallets.
 
-**Decision**: Use Arweave wallets (and later RSA/ECDSA) with HTTPSig (RFC 9421) for authentication. The wallet address becomes the pod identifier.
+**Decision**: Use Arweave and Ethereum wallets with HTTPSig (RFC 9421) for authentication. The wallet address becomes the pod identifier.
 
 **Consequences**:
-- Users connect with their existing wallet
+- Users connect with their existing Arweave or Ethereum wallet
 - Each wallet maps to exactly one pod
 - All requests must be HTTPSig-signed
 - No username/password system needed
+
+**Supported Wallet Types**:
+
+| Wallet | Address Format | Signature Algorithm |
+|--------|---------------|---------------------|
+| Ethereum | `0x` + 40 hex chars | ECDSA secp256k1 (personal_sign) |
+| Arweave | 43-char Base64URL | RSA-PSS-SHA256 |
+
+**Implementation**:
+- `api/src/auth/arweave.ts` - Arweave address validation and signature verification
+- `api/src/auth/store.ts` - Multi-wallet challenge and session management
+- `opencode-sidecar/src/httpSig.ts` - HTTPSig verification for both wallet types
 
 ---
 

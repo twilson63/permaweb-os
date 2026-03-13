@@ -28,7 +28,10 @@ export interface Pod {
   createdAt: string;
   llm: PodLlmConfig;
   llmSecretName: string;
+  /** Key ID for HTTPSig verification (public identifier, not the key itself) */
   ownerKeyId: string;
+  /** Kubernetes secret name containing the owner's public key (mounted only in sidecar) */
+  ownerKeySecretName?: string;
 }
 
 /**

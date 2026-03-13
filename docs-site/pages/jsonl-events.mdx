@@ -1,0 +1,375 @@
+# JSONL Events
+
+Complete reference for JSONL stream event types.
+
+## Overview
+
+All pod responses are streamed as JSONL (JSON Lines) — one JSON object per line. This format allows for real-time streaming of multi-event responses.
+
+```
+{"id":"req_1","type":"step_start","sessionId":"ses_abc"}
+{"id":"req_1","type":"text","text":"I'll create that file..."}
+{"id":"req_1","type":"tool_use","tool":"write","args":{"path":"hello.ts"}}
+{"id":"req_1","type":"tool_result","tool":"write","result":"File created"}
+{"id":"req_1","type":"text","text":"Done!"}
+{"id":"req_1","type":"step_finish","reason":"stop"}
+```
+
+## Event Types
+
+### Step Lifecycle
+
+#### `step_start`
+
+Signals the start of a new processing step.
+
+```typescript
+interface StepStartEvent {
+  type: 'step_start';
+  id: string;           // Request ID
+  sessionId: string;    // Session ID for context
+}
+```
+
+**Example:**
+```json
+{"id":"req_1","type":"step_start","sessionId":"ses_abc123"}
+```
+
+---
+
+#### `step_finish`
+
+Signals the end of processing.
+
+```typescript
+interface StepFinishEvent {
+  type: 'step_finish';
+  id: string;
+  sessionId: string;
+  reason: 'stop' | 'error' | 'limit';
+}
+```
+
+**Example:**
+```json
+{"id":"req_1","type":"step_finish","sessionId":"ses_abc123","reason":"stop"}
+```
+
+| Reason | Description |
+|--------|-------------|
+| `stop` | Normal completion |
+| `error` | Error occurred (see `error` event) |
+| `limit` | Token or time limit reached |
+
+---
+
+### Content Events
+
+#### `text`
+
+Text content from the assistant.
+
+```typescript
+interface TextEvent {
+  type: 'text';
+  id: string;
+  text: string;
+}
+```
+
+**Example:**
+```json
+{"id":"req_1","type":"text","text":"I'll create a hello.ts file for you."}
+```
+
+---
+
+### Tool Events
+
+#### `tool_use`
+
+The assistant is using a tool.
+
+```typescript
+interface ToolUseEvent {
+  type: 'tool_use';
+  id: string;
+  tool: string;
+  args: Record<string, any>;
+}
+```
+
+**Example:**
+```json
+{"id":"req_1","type":"tool_use","tool":"write","args":{"path":"hello.ts","content":"console.log('Hello')"}}
+```
+
+**Common Tools:**
+| Tool | Description | Args |
+|------|-------------|------|
+| `read` | Read file | `{ path: string }` |
+| `write` | Write file | `{ path: string, content: string }` |
+| `edit` | Edit file | `{ path: string, oldText: string, newText: string }` |
+| `exec` | Run command | `{ command: string }` |
+| `search` | Web search | `{ query: string }` |
+
+---
+
+#### `tool_result`
+
+Result from a tool execution.
+
+```typescript
+interface ToolResultEvent {
+  type: 'tool_result';
+  id: string;
+  tool: string;
+  result: string;
+  success: boolean;
+}
+```
+
+**Example:**
+```json
+{"id":"req_1","type":"tool_result","tool":"write","result":"File hello.ts created","success":true}
+```
+
+---
+
+### Error Event
+
+#### `error`
+
+An error occurred during processing.
+
+```typescript
+interface ErrorEvent {
+  type: 'error';
+  id: string;
+  code: string;
+  message: string;
+  details?: Record<string, any>;
+}
+```
+
+**Example:**
+```json
+{"id":"req_1","type":"error","code":"TOOL_FAILED","message":"Failed to write file","details":{"path":"hello.ts","reason":"Permission denied"}}
+```
+
+**Common Error Codes:**
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | Request format invalid |
+| `TOOL_FAILED` | Tool execution failed |
+| `LLM_ERROR` | LLM provider error |
+| `RATE_LIMITED` | Rate limit exceeded |
+| `CONTEXT_OVERFLOW` | Context window exceeded |
+
+---
+
+### Progress Events
+
+#### `progress`
+
+Progress update during long operations.
+
+```typescript
+interface ProgressEvent {
+  type: 'progress';
+  id: string;
+  progress: number;     // 0-100
+  message: string;
+}
+```
+
+**Example:**
+```json
+{"id":"req_1","type":"progress","progress":50,"message":"Processing large file..."}
+```
+
+---
+
+### Done Event
+
+#### `done`
+
+Final event indicating completion.
+
+```typescript
+interface DoneEvent {
+  type: 'done';
+  id: string;
+  status: 'success' | 'error' | 'partial';
+  tokens?: {
+    input: number;
+    output: number;
+    total: number;
+  };
+}
+```
+
+**Example:**
+```json
+{"id":"req_1","type":"done","status":"success","tokens":{"input":150,"output":500,"total":650}}
+```
+
+---
+
+## Complete TypeScript Types
+
+```typescript
+// All events extend base event
+interface BaseEvent {
+  id: string;
+}
+
+// Content events
+interface TextEvent extends BaseEvent {
+  type: 'text';
+  text: string;
+}
+
+// Tool events
+interface ToolUseEvent extends BaseEvent {
+  type: 'tool_use';
+  tool: string;
+  args: Record<string, any>;
+}
+
+interface ToolResultEvent extends BaseEvent {
+  type: 'tool_result';
+  tool: string;
+  result: string;
+  success: boolean;
+}
+
+// Lifecycle events
+interface StepStartEvent extends BaseEvent {
+  type: 'step_start';
+  sessionId: string;
+}
+
+interface StepFinishEvent extends BaseEvent {
+  type: 'step_finish';
+  sessionId: string;
+  reason: 'stop' | 'error' | 'limit';
+}
+
+// Error event
+interface ErrorEvent extends BaseEvent {
+  type: 'error';
+  code: string;
+  message: string;
+  details?: Record<string, any>;
+}
+
+// Progress event
+interface ProgressEvent extends BaseEvent {
+  type: 'progress';
+  progress: number;
+  message: string;
+}
+
+// Done event
+interface DoneEvent extends BaseEvent {
+  type: 'done';
+  status: 'success' | 'error' | 'partial';
+  tokens?: {
+    input: number;
+    output: number;
+    total: number;
+  };
+}
+
+// Union type
+type StreamEvent =
+  | TextEvent
+  | ToolUseEvent
+  | ToolResultEvent
+  | StepStartEvent
+  | StepFinishEvent
+  | ErrorEvent
+  | ProgressEvent
+  | DoneEvent;
+```
+
+---
+
+## Parsing Example
+
+```typescript
+async function parseStream(response: Response): Promise<StreamEvent[]> {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  const events: StreamEvent[] = [];
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    
+    // Keep last incomplete line in buffer
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.trim()) {
+        try {
+          const event = JSON.parse(line) as StreamEvent;
+          events.push(event);
+        } catch (e) {
+          console.error('Failed to parse event:', line);
+        }
+      }
+    }
+  }
+
+  // Process any remaining buffer
+  if (buffer.trim()) {
+    try {
+      events.push(JSON.parse(buffer));
+    } catch (e) {
+      console.error('Failed to parse final event:', buffer);
+    }
+  }
+
+  return events;
+}
+```
+
+---
+
+## Event Order
+
+Typical event order:
+
+```
+1. step_start      → Processing begins
+2. text           → Assistant message (may be multiple)
+3. tool_use       → Tool call (if needed)
+4. tool_result    → Tool result
+5. [text]         → More assistant text (optional)
+6. step_finish    → Processing ends
+7. done           → Final completion
+```
+
+For errors:
+```
+1. step_start
+2. [text/tool_use]
+3. error          → Error occurred
+4. step_finish    → reason: "error"
+5. done           → status: "error"
+```
+
+---
+
+## What's Next?
+
+- [HTTPSig Signing](/http-sig) — How to sign requests
+- [API Reference](/api-reference) — All endpoints
+- [Frontend Guide](/frontend-quickstart) — Build your first app

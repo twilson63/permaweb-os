@@ -123,9 +123,11 @@ OPENCODE_BIN="/usr/bin/true" node -e '/* reproduced locally */'
 
 ---
 
-### 4) High - Static Owner Key Identity in Pod Template
+### 4) ~~High - Static Owner Key Identity in Pod Template~~ ✅ RESOLVED
 
-**Evidence**
+**Status:** RESOLVED (2026-03-12)
+
+**Evidence (Original)**
 
 - `OWNER_KEY_ID` hardcoded to `owner`: `k8s/pod-template.yaml:70`
 - `OWNER_PUBLIC_KEY_PEM` embedded static value: `k8s/pod-template.yaml:72`
@@ -135,10 +137,23 @@ OPENCODE_BIN="/usr/bin/true" node -e '/* reproduced locally */'
 - Conflicts with per-wallet ownership model; encourages shared signer identity across pods.
 - If corresponding private key leaks, all pods using this template are exposed.
 
-**Remediation**
+**Remediation (Implemented)**
 
-- Generate and inject per-pod owner key material at pod creation.
-- Bind key id to authenticated wallet identity in control plane metadata.
+✅ Per-wallet owner key generation implemented (`api/src/pods/owner-keys.ts`)
+✅ Unique RSA key pairs generated for each wallet
+✅ Public keys stored in Kubernetes secrets (`owner-key-<keyId>`)
+✅ Key ID exposed via pod annotation (public identifier)
+✅ Public key mounted ONLY in sidecar container (not opencode)
+✅ Sidecar reads key from file (`/secrets/owner/public-key.pem`)
+✅ Environment variable key injection removed
+
+**Security Guarantees After Fix**
+
+1. ✅ Each wallet has a unique owner key
+2. ✅ Public key mounted ONLY in sidecar container
+3. ✅ OpenCode container has NO access to owner key
+4. ✅ Pod owner cannot see or exfiltrate the key
+5. ✅ Key is not in environment variables (mounted from secret)
 
 ---
 

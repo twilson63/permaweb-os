@@ -1,11 +1,20 @@
 /**
  * @fileoverview In-memory wallet challenge/session store with optional GitHub token linkage.
+ * Supports Ethereum and Arweave wallet authentication.
  * @author Web OS contributors
- * @exports AuthStore, SessionRecord, SessionIdentity
+ * @exports AuthStore, SessionRecord, SessionIdentity, WalletType
  */
 
 import { randomBytes } from "crypto";
 import { utils } from "ethers";
+import {
+  WalletType,
+  detectWalletType,
+  isValidEthereumAddress,
+  isValidArweaveAddress,
+  verifyArweaveSignatureWithJwk,
+  ArweaveJWK
+} from "./arweave.js";
 
 /**
  * One-time sign-in challenge tracked for a wallet address.
@@ -14,6 +23,7 @@ interface ChallengeRecord {
   message: string;
   nonce: string;
   expiresAt: number;
+  walletType: WalletType;
 }
 
 /**
@@ -43,9 +53,18 @@ interface StoredSession {
 }
 
 /**
+ * Options for Arweave signature verification.
+ */
+interface ArweaveVerifyOptions {
+  /** Pre-resolved JWK public key (avoids gateway lookup) */
+  jwk?: ArweaveJWK;
+}
+
+/**
  * In-memory authentication store for wallet sign-in challenges and sessions.
  *
  * This class owns the complete challenge -> signature -> session lifecycle.
+ * Supports both Ethereum and Arweave wallet authentication.
  */
 export class AuthStore {
   private readonly challenges = new Map<string, ChallengeRecord>();
@@ -76,7 +95,7 @@ export class AuthStore {
    * @throws {Error} If the wallet address is not valid.
    */
   createChallenge(address: string): ChallengeRecord {
-    const normalizedAddress = this.normalizeAddress(address);
+    const { normalizedAddress, walletType } = this.normalizeAddress(address);
     const nonce = randomBytes(16).toString("hex");
     const issuedAt = new Date().toISOString();
     const expiresAt = Date.now() + this.challengeTtlMs;
@@ -91,23 +110,30 @@ export class AuthStore {
     const challenge: ChallengeRecord = {
       message,
       nonce,
-      expiresAt
+      expiresAt,
+      walletType
     };
 
-    this.challenges.set(normalizedAddress.toLowerCase(), challenge);
+    this.challenges.set(this.getChallengeKey(normalizedAddress), challenge);
     return challenge;
   }
 
   /**
    * Validates a signed challenge and issues a session when valid.
+   * Supports both Ethereum and Arweave wallet signatures.
    *
    * @param address - Claimed wallet address.
    * @param signature - Signature over the issued challenge message.
+   * @param options - Optional verification options (e.g., pre-resolved JWK).
    * @returns Session record when valid; otherwise `null`.
    */
-  verifySignature(address: string, signature: string): SessionRecord | null {
-    const normalizedAddress = this.normalizeAddress(address);
-    const addressKey = normalizedAddress.toLowerCase();
+  async verifySignature(
+    address: string,
+    signature: string,
+    options?: ArweaveVerifyOptions
+  ): Promise<SessionRecord | null> {
+    const { normalizedAddress, walletType } = this.normalizeAddress(address);
+    const addressKey = this.getChallengeKey(normalizedAddress);
     const challenge = this.challenges.get(addressKey);
 
     if (!challenge) {
@@ -119,9 +145,58 @@ export class AuthStore {
       return null;
     }
 
-    const recoveredAddress = utils.verifyMessage(challenge.message, signature);
+    // Verify based on wallet type
+    let isValid = false;
 
-    if (recoveredAddress.toLowerCase() !== addressKey) {
+    if (walletType === "ethereum") {
+      isValid = this.verifyEthereumSignature(challenge.message, signature, addressKey);
+    } else if (walletType === "arweave") {
+      isValid = await this.verifyArweaveSignature(
+        challenge.message,
+        signature,
+        normalizedAddress,
+        options
+      );
+    }
+
+    if (!isValid) {
+      return null;
+    }
+
+    this.challenges.delete(addressKey);
+    return this.createSession(normalizedAddress);
+  }
+
+  /**
+   * Synchronous version of verifySignature for Ethereum-only verification.
+   * Maintains backward compatibility with existing code.
+   *
+   * @param address - Claimed wallet address.
+   * @param signature - Signature over the issued challenge message.
+   * @returns Session record when valid; otherwise `null`.
+   */
+  verifySignatureSync(address: string, signature: string): SessionRecord | null {
+    const { normalizedAddress, walletType } = this.normalizeAddress(address);
+    const addressKey = this.getChallengeKey(normalizedAddress);
+    const challenge = this.challenges.get(addressKey);
+
+    if (!challenge) {
+      return null;
+    }
+
+    if (challenge.expiresAt < Date.now()) {
+      this.challenges.delete(addressKey);
+      return null;
+    }
+
+    // Only Ethereum supports sync verification
+    if (walletType !== "ethereum") {
+      return null;
+    }
+
+    const isValid = this.verifyEthereumSignature(challenge.message, signature, addressKey);
+
+    if (!isValid) {
       return null;
     }
 
@@ -219,19 +294,94 @@ export class AuthStore {
   }
 
   /**
-   * Validates that an address is a 20-byte hex Ethereum address.
+   * Normalizes and validates a wallet address.
+   * Supports both Ethereum and Arweave address formats.
    *
    * @param address - Candidate wallet address.
-   * @returns Trimmed address when valid.
+   * @returns Object with normalized address and detected wallet type.
    * @throws {Error} If the format is invalid.
    */
-  private normalizeAddress(address: string): string {
+  private normalizeAddress(address: string): { normalizedAddress: string; walletType: WalletType } {
     const trimmedAddress = address.trim();
+    const walletType = detectWalletType(trimmedAddress);
 
-    if (!/^0x[a-fA-F0-9]{40}$/.test(trimmedAddress)) {
-      throw new Error("Invalid wallet address");
+    if (!walletType) {
+      throw new Error("Invalid wallet address. Must be Ethereum (0x...) or Arweave (43-char base64url)");
     }
 
-    return trimmedAddress;
+    // Ethereum addresses are case-insensitive, normalize to lowercase
+    const normalizedAddress = walletType === "ethereum"
+      ? trimmedAddress.toLowerCase()
+      : trimmedAddress;
+
+    return { normalizedAddress, walletType };
+  }
+
+  /**
+   * Gets the challenge key for storing/retrieving challenges.
+   * Uses lowercase for Ethereum, original case for Arweave.
+   *
+   * @param address - Normalized wallet address.
+   * @returns Key for challenge storage.
+   */
+  private getChallengeKey(address: string): string {
+    // For Ethereum, use lowercase; for Arweave, preserve case
+    if (isValidEthereumAddress(address)) {
+      return address.toLowerCase();
+    }
+    return address;
+  }
+
+  /**
+   * Verifies an Ethereum signature using ethers.
+   *
+   * @param message - Challenge message that was signed.
+   * @param signature - Hex-encoded signature.
+   * @param expectedAddress - Expected signer address (lowercase).
+   * @returns `true` if signature is valid.
+   */
+  private verifyEthereumSignature(
+    message: string,
+    signature: string,
+    expectedAddress: string
+  ): boolean {
+    try {
+      const recoveredAddress = utils.verifyMessage(message, signature);
+      return recoveredAddress.toLowerCase() === expectedAddress;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Verifies an Arweave signature.
+   *
+   * If JWK is provided in options, uses it directly.
+   * Otherwise, resolves the public key from Arweave gateway.
+   *
+   * @param message - Challenge message that was signed.
+   * @param signature - Base64URL-encoded signature.
+   * @param address - Arweave wallet address.
+   * @param options - Verification options.
+   * @returns `true` if signature is valid.
+   */
+  private async verifyArweaveSignature(
+    message: string,
+    signature: string,
+    address: string,
+    options?: ArweaveVerifyOptions
+  ): Promise<boolean> {
+    try {
+      // If JWK provided directly, use it
+      if (options?.jwk) {
+        return verifyArweaveSignatureWithJwk(message, signature, options.jwk);
+      }
+
+      // Otherwise, resolve from gateway
+      const { verifyArweaveSignature: verify } = await import("./arweave.js");
+      return await verify(message, signature, address);
+    } catch {
+      return false;
+    }
   }
 }

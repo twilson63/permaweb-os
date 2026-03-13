@@ -6,6 +6,11 @@ import { authStore } from "./auth/store";
  */
 
 /**
+ * Supported wallet types.
+ */
+export type WalletType = "ethereum" | "arweave";
+
+/**
  * Pod entity shape returned by backend endpoints.
  */
 export interface Pod {
@@ -34,6 +39,7 @@ export interface CreatePodInput {
 export interface WalletAuthChallenge {
   message: string;
   nonce: string;
+  walletType: WalletType;
 }
 
 /**
@@ -52,10 +58,61 @@ export interface EthereumProvider {
 }
 
 /**
+ * Arweave wallet provider interface.
+ */
+export interface ArweaveProvider {
+  getActiveAddress: () => Promise<string>;
+  signMessage: (message: string, options?: { name?: string; saltLength?: number }) => Promise<string>;
+  signature: (data: unknown) => Promise<unknown>;
+}
+
+/**
  * Response shape for the pod list endpoint.
  */
 interface ListPodsResponse {
   pods: Pod[];
+}
+
+/**
+ * Detects wallet type from address format.
+ *
+ * @param address - Wallet address to analyze.
+ * @returns Detected wallet type or null if unrecognized.
+ */
+export function detectWalletType(address: string): WalletType | null {
+  const trimmed = address.trim();
+
+  // Ethereum: 0x + 40 hex chars
+  if (/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
+    return "ethereum";
+  }
+
+  // Arweave: 43-char Base64URL
+  if (/^[A-Za-z0-9_-]{43}$/.test(trimmed)) {
+    return "arweave";
+  }
+
+  return null;
+}
+
+/**
+ * Validates an Arweave wallet address format.
+ *
+ * @param address - Candidate address string.
+ * @returns `true` if the address matches Arweave format.
+ */
+export function isValidArweaveAddress(address: string): boolean {
+  return /^[A-Za-z0-9_-]{43}$/.test(address.trim());
+}
+
+/**
+ * Validates an Ethereum wallet address format.
+ *
+ * @param address - Candidate address string.
+ * @returns `true` if the address matches Ethereum format.
+ */
+export function isValidEthereumAddress(address: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(address.trim());
 }
 
 /**
@@ -373,19 +430,28 @@ export const requestWalletChallenge = async (address: string): Promise<WalletAut
  * Verifies a signed challenge and returns an authenticated session.
  *
  * @param address - Wallet address that signed the challenge.
- * @param signature - Signature produced by wallet `personal_sign`.
+ * @param signature - Signature produced by wallet (hex for Ethereum, base64url for Arweave).
+ * @param jwk - Optional JWK public key for Arweave wallets (avoids gateway lookup).
  * @returns Session token and expiry.
  */
 export const verifyWalletSignature = async (
   address: string,
-  signature: string
+  signature: string,
+  jwk?: unknown
 ): Promise<WalletAuthSession> => {
+  const body: Record<string, unknown> = { address, signature };
+
+  // Include JWK for Arweave if provided
+  if (jwk) {
+    body.jwk = jwk;
+  }
+
   const response = await fetch("/api/auth/verify", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ address, signature })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -393,4 +459,49 @@ export const verifyWalletSignature = async (
   }
 
   return (await response.json()) as WalletAuthSession;
+};
+
+/**
+ * Signs a message with an Ethereum wallet.
+ *
+ * @param provider - Ethereum wallet provider.
+ * @param address - Wallet address.
+ * @param message - Message to sign.
+ * @returns Hex-encoded signature.
+ */
+export const signWithEthereum = async (
+  provider: EthereumProvider,
+  address: string,
+  message: string
+): Promise<string> => {
+  const response = await provider.request({
+    method: "personal_sign",
+    params: [message, address],
+  });
+
+  if (typeof response !== "string") {
+    throw new Error("Wallet did not return a signature");
+  }
+
+  return response;
+};
+
+/**
+ * Signs a message with an Arweave wallet.
+ *
+ * @param provider - Arweave wallet provider.
+ * @param message - Message to sign.
+ * @returns Base64URL-encoded signature.
+ */
+export const signWithArweave = async (
+  provider: ArweaveProvider,
+  message: string
+): Promise<string> => {
+  // Arweave wallets typically use signMessage for RSA-PSS signatures
+  const signature = await provider.signMessage(message, {
+    name: "RSA-PSS",
+    saltLength: 32
+  });
+
+  return signature;
 };

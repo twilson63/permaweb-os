@@ -1,0 +1,219 @@
+# Subdomain Routing
+
+Each pod gets its own subdomain for direct access.
+
+## Overview
+
+```
+api.permaweb.live          → Gateway (pod lifecycle)
+abc123.permaweb.live       → Pod abc123 (direct access)
+xyz789.permaweb.live       → Pod xyz789 (direct access)
+```
+
+## Why Subdomains?
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Subdomain (`abc123.permaweb.live`) | Direct access, lower latency, independent scaling | Requires wildcard DNS/cert |
+| Path (`permaweb.live/pod/abc123`) | Simpler DNS | Gateway proxies all requests |
+
+We chose subdomains because:
+
+1. **Direct access** — No gateway in the path means lower latency
+2. **Isolation** — Each pod is independently addressable
+3. **SSL** — Wildcard cert for `*.permaweb.live` covers all pods
+4. **DNS** — Can route pods to different regions/clusters
+
+## DNS Configuration
+
+```
+# A records for gateway
+api.permaweb.live      A     <gateway-ip>
+
+# Wildcard for pods
+*.permaweb.live        A     <ingress-ip>
+```
+
+### For Local Development
+
+```bash
+# /etc/hosts or DNS server
+127.0.0.1 api.web-os.local
+127.0.0.1 abc123.web-os.local
+127.0.0.1 xyz789.web-os.local
+
+# Or use nip.io for automatic resolution
+# abc123.127.0.0.1.nip.io → 127.0.0.1
+```
+
+## Ingress Configuration
+
+```yaml
+# k8s/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-os-ingress
+  namespace: web-os
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    # Gateway API
+    - host: api.permaweb.live
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-os-api
+                port:
+                  number: 3000
+
+    # Wildcard for pods
+    - host: "*.permaweb.live"
+      http:
+        paths:
+          - path: /verify
+            pathType: Prefix
+            backend:
+              service:
+                name: pod-service
+                port:
+                  number: 3001  # HTTPSig sidecar
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pod-service
+                port:
+                  number: 4096  # OpenCode
+```
+
+## Pod ID Generation
+
+Pod IDs are derived from the wallet address:
+
+```typescript
+import { createHash } from 'crypto';
+
+function generatePodId(walletAddress: string): string {
+  const hash = createHash('sha256')
+    .update(walletAddress.toLowerCase())
+    .digest('hex');
+  
+  // Take first 8 characters for readability
+  return hash.slice(0, 8);
+}
+
+// Example:
+// walletAddress: "0xABC123..."
+// podId: "a1b2c3d4"
+// subdomain: "a1b2c3d4.permaweb.live"
+```
+
+## Service Discovery
+
+Each pod gets a Kubernetes Service:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: pod-abc123
+  namespace: web-os
+spec:
+  selector:
+    pod-id: abc123
+  ports:
+    - name: httpsig
+      port: 3001
+      targetPort: 3001
+    - name: opencode
+      port: 4096
+      targetPort: 4096
+```
+
+## Request Routing Flow
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                    REQUEST ROUTING                              │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  1. User sends request to abc123.permaweb.live                 │
+│                                                                │
+│  2. DNS resolves to ingress IP                                 │
+│                                                                │
+│  3. Ingress matches host: *.permaweb.live                      │
+│     │                                                          │
+│     ├── Path: /verify  → Sidecar (port 3001)                   │
+│     └── Path: /        → OpenCode (port 4096)                   │
+│                                                                │
+│  4. Sidecar verifies HTTPSig                                   │
+│     │                                                          │
+│     ├── Valid   → Forward to OpenCode                         │
+│     └── Invalid → 401 Unauthorized                             │
+│                                                                │
+│  5. OpenCode processes request                                 │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+## Load Balancing
+
+For high-traffic deployments:
+
+```yaml
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-os-api-hpa
+  namespace: web-os
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-os-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+## Multi-Region Deployment
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                   MULTI-REGION                                  │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  Global DNS (Route 53 / Cloudflare)                            │
+│      │                                                         │
+│      ├── us-east.permaweb.live  → US cluster                   │
+│      ├── eu-west.permaweb.live  → EU cluster                   │
+│      └── asia.permaweb.live     → Asia cluster                  │
+│                                                                │
+│  Each cluster:                                                 │
+│      - Full gateway + pods                                     │
+│      - Regional LLM keys                                       │
+│      - Synced pod metadata                                     │
+│                                                                │
+│  User → Nearest region → Pod                                   │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+## What's Next?
+
+- [API Reference](/api-reference) — All endpoints
+- [Security Model](/security-model) — Authentication and secrets
+- [Architecture](/architecture) — Full system overview

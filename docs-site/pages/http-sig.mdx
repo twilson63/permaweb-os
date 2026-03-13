@@ -1,0 +1,378 @@
+# HTTPSig Signing
+
+How to sign requests using HTTP Message Signatures (RFC 9421).
+
+## Overview
+
+Every request to a pod must be signed using HTTP Message Signatures (RFC 9421). This ensures:
+
+1. **Authentication** — Only the owner can access their pod
+2. **Integrity** — Request cannot be tampered with
+3. **Non-repudiation** — Signer cannot deny sending the request
+
+## Quick Start
+
+```typescript
+import { signatureHeaders } from 'http-message-sig';
+import { Wallet } from 'ethers';
+
+async function signRequest(wallet: Wallet, podSubdomain: string, request: any) {
+  const headers = await signatureHeaders({
+    method: 'POST',
+    url: '/verify',
+    headers: {
+      host: podSubdomain,
+      date: new Date().toUTCString()
+    }
+  }, {
+    signer: {
+      keyid: wallet.address.toLowerCase(),
+      sign: async (data: string) => {
+        const signature = await wallet.signMessage(data);
+        return Buffer.from(signature.slice(2), 'hex');
+      }
+    }
+  });
+
+  return headers;
+}
+```
+
+## Signature Components
+
+### Required Components
+
+| Component | Description | Example |
+|-----------|-------------|---------|
+| `@method` | HTTP method | `POST` |
+| `@path` | Request path | `/verify` |
+| `host` | Target host | `abc123.permaweb.live` |
+| `date` | Request timestamp | `Wed, 11 Mar 2026 10:30:00 GMT` |
+
+### Signature Header
+
+```
+Signature: sig1=:abc123...:
+Signature-Input: sig1=("@method" "@path" "host" "date");created=1773155811;keyid="0xabc..."
+```
+
+## Signing Process
+
+### 1. Create Canonical String
+
+```typescript
+function createCanonicalString(request: {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+}): string {
+  const lines: string[] = [];
+  
+  // @method
+  lines.push(`"@method": ${request.method}`);
+  
+  // @path
+  lines.push(`"@path": ${new URL(request.url).pathname}`);
+  
+  // @query (optional)
+  const query = new URL(request.url).search;
+  if (query) {
+    lines.push(`"@query": ${query}`);
+  }
+  
+  // Headers (in order specified in Signature-Input)
+  for (const [name, value] of Object.entries(request.headers)) {
+    lines.push(`"${name.toLowerCase()}": ${value}`);
+  }
+  
+  return lines.join('\n');
+}
+```
+
+### 2. Sign the String
+
+```typescript
+import { Wallet } from 'ethers';
+
+async function signWithWallet(
+  canonicalString: string,
+  wallet: Wallet
+): Promise<Buffer> {
+  // Ethereum personal sign
+  const signature = await wallet.signMessage(canonicalString);
+  
+  // Convert hex to bytes
+  return Buffer.from(signature.slice(2), 'hex');
+}
+```
+
+### 3. Create Headers
+
+```typescript
+interface SignatureHeaders {
+  Signature: string;
+  'Signature-Input': string;
+  Date?: string;
+}
+
+async function createSignatureHeaders(
+  request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+  },
+  wallet: Wallet
+): Promise<SignatureHeaders> {
+  const created = Math.floor(Date.now() / 1000);
+  const keyid = wallet.address.toLowerCase();
+  
+  // Components to sign
+  const components = ['"@method"', '"@path"', '"host"', '"date"'];
+  
+  // Create canonical string
+  const canonical = createCanonicalString(request);
+  
+  // Sign
+  const signature = await signWithWallet(canonical, wallet);
+  const signatureB64 = signature.toString('base64');
+  
+  // Build headers
+  const signatureInput = `sig1=(${components.join(' ')});created=${created};keyid="${keyid}"`;
+  const signatureHeader = `sig1=:${signatureB64}:`;
+  
+  return {
+    'Signature': signatureHeader,
+    'Signature-Input': signatureInput,
+    'Date': request.headers.date
+  };
+}
+```
+
+## Verification (Server-Side)
+
+```typescript
+import { verifySignature } from 'http-message-sig';
+
+async function verifyRequest(
+  request: Request,
+  ownerAddress: string
+): Promise<boolean> {
+  const signature = request.headers.get('Signature');
+  const signatureInput = request.headers.get('Signature-Input');
+  
+  if (!signature || !signatureInput) {
+    return false;
+  }
+  
+  // Extract keyId from Signature-Input
+  const keyidMatch = signatureInput.match(/keyid="([^"]+)"/);
+  if (!keyidMatch) {
+    return false;
+  }
+  
+  const keyid = keyidMatch[1].toLowerCase();
+  
+  // Verify keyId matches owner
+  if (keyid !== ownerAddress.toLowerCase()) {
+    return false;
+  }
+  
+  // Get public key from keyId
+  const publicKey = await getPublicKeyFromAddress(keyid);
+  
+  // Verify signature
+  const valid = await verifySignature(request, publicKey);
+  
+  return valid;
+}
+```
+
+## Supported Algorithms
+
+| Algorithm | Description | Key Type |
+|-----------|-------------|----------|
+| `eth-personal-sign` | Ethereum personal sign | Ethereum address |
+| `rsa-v1_5-sha256` | RSA PKCS#1 v1.5 with SHA-256 | RSA key |
+| `rsa-pss-sha512` | RSA PSS with SHA-512 | RSA key |
+| `ecdsa-p256-sha256` | ECDSA with P-256 curve | ECDSA key |
+| `ecdsa-p384-sha384` | ECDSA with P-384 curve | ECDSA key |
+
+## Wallet-Specific Signing
+
+### Ethereum (MetaMask, ethers.js)
+
+```typescript
+import { Wallet } from 'ethers';
+
+const wallet = new Wallet(privateKey);
+// Or from browser: const provider = new ethers.BrowserProvider(window.ethereum);
+
+const signature = await wallet.signMessage(canonicalString);
+// Signature format: 0x<hex>
+```
+
+### Arweave
+
+```typescript
+import Arweave from 'arweave';
+
+const arweave = Arweave.init({});
+const wallet = await arweave.wallets.jwkToAddress(keyfile);
+
+// Sign using Arweave wallet extension
+const signature = await window.arweaveWallet.signMessage(
+  new TextEncoder().encode(canonicalString),
+  { name: 'RSA-PSS', saltLength: 32 }
+);
+```
+
+### RSA Keypair
+
+```typescript
+import { generateKeyPair, sign } from 'crypto';
+
+const { privateKey, publicKey } = await generateKeyPair('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+});
+
+const signature = sign('rsa-sha256', Buffer.from(canonicalString), {
+  key: privateKey,
+  padding: constants.RSA_PKCS1_PADDING
+});
+```
+
+### ECDSA Keypair
+
+```typescript
+import { generateKeyPair, sign } from 'crypto';
+
+const { privateKey, publicKey } = await generateKeyPair('ec', {
+  namedCurve: 'P-256',
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+});
+
+const signature = sign('sha256', Buffer.from(canonicalString), {
+  key: privateKey,
+  type: 'pkcs8',
+  format: 'pem',
+  dsaEncoding: 'ieee-p1363'
+});
+```
+
+## Replay Protection
+
+### Nonce
+
+Each request must have a unique `id` field:
+
+```typescript
+import { randomUUID } from 'crypto';
+
+const request = {
+  id: `req_${Date.now()}_${randomUUID()}`,
+  method: 'message',
+  params: { content: 'Hello' }
+};
+```
+
+### Timestamp
+
+Requests must include a fresh timestamp:
+
+```typescript
+const headers = {
+  ...request.headers,
+  date: new Date().toUTCString()
+};
+```
+
+### Server Validation
+
+```typescript
+const MAX_SKEW = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+async function validateReplay(request: Request, nonceStore: Set<string>): Promise<boolean> {
+  const body = await request.clone().json();
+  
+  // Check nonce hasn't been used
+  if (nonceStore.has(body.id)) {
+    return false;
+  }
+  
+  // Check timestamp is within allowed window
+  const requestDate = new Date(request.headers.get('date') || '');
+  const now = new Date();
+  const skew = Math.abs(now.getTime() - requestDate.getTime());
+  
+  if (skew > MAX_SKEW) {
+    return false;
+  }
+  
+  // Mark nonce as used
+  nonceStore.add(body.id);
+  
+  return true;
+}
+```
+
+## Complete Example
+
+```typescript
+import { signatureHeaders } from 'http-message-sig';
+import { Wallet } from 'ethers';
+
+async function sendSignedMessage(
+  wallet: Wallet,
+  podSubdomain: string,
+  content: string
+): Promise<Response> {
+  const request = {
+    id: `req_${Date.now()}_${crypto.randomUUID()}`,
+    method: 'message',
+    params: { content },
+    timestamp: Date.now()
+  };
+
+  // Create signature headers
+  const sigHeaders = await signatureHeaders({
+    method: 'POST',
+    url: '/verify',
+    headers: {
+      host: podSubdomain,
+      date: new Date().toUTCString(),
+      'content-type': 'application/json'
+    }
+  }, {
+    signer: {
+      keyid: wallet.address.toLowerCase(),
+      sign: async (data: string) => {
+        const sig = await wallet.signMessage(data);
+        return Buffer.from(sig.slice(2), 'hex');
+      }
+    }
+  });
+
+  // Send request
+  const response = await fetch(`https://${podSubdomain}/verify`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Signature': sigHeaders.Signature,
+      'Signature-Input': sigHeaders['Signature-Input'],
+      'Date': sigHeaders.Date!
+    },
+    body: JSON.stringify(request)
+  });
+
+  return response;
+}
+```
+
+## What's Next?
+
+- [API Reference](/api-reference) — All endpoints
+- [Security Model](/security-model) — Authentication and secrets
+- [JSONL Events](/jsonl-events) — Event types reference

@@ -1,0 +1,70 @@
+{
+  "index": {
+    "title": "Welcome",
+    "type": "page"
+  },
+  "-- Getting Started": {
+    "type": "separator",
+    "title": "Getting Started"
+  },
+  "getting-started": {
+    "title": "Quick Start",
+    "type": "page"
+  },
+  "cluster-setup": {
+    "title": "Cluster Setup",
+    "type": "page"
+  },
+  "-- Architecture": {
+    "type": "separator",
+    "title": "Architecture"
+  },
+  "architecture": {
+    "title": "Overview",
+    "type": "page"
+  },
+  "security-model": {
+    "title": "Security Model",
+    "type": "page"
+  },
+  "subdomain-routing": {
+    "title": "Subdomain Routing",
+    "type": "page"
+  },
+  "-- Guides": {
+    "type": "separator",
+    "title": "Guides"
+  },
+  "frontend-quickstart": {
+    "title": "Build a Frontend",
+    "type": "page"
+  },
+  "agent-integration": {
+    "title": "Agent Integration",
+    "type": "page"
+  },
+  "-- API Reference": {
+    "type": "separator",
+    "title": "API Reference"
+  },
+  "api-reference": {
+    "title": "Endpoints",
+    "type": "page"
+  },
+  "jsonl-events": {
+    "title": "JSONL Events",
+    "type": "page"
+  },
+  "http-sig": {
+    "title": "HTTPSig Signing",
+    "type": "page"
+  },
+  "-- ADRs": {
+    "type": "separator",
+    "title": "Architecture Decisions"
+  },
+  "adr": {
+    "title": "Overview",
+    "type": "page"
+  }
+}

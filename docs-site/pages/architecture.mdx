@@ -1,0 +1,175 @@
+# Architecture Overview
+
+Permaweb OS is a Kubernetes platform where each user gets an isolated OpenCode pod with HTTPSig authentication.
+
+## Mental Model
+
+Think of each pod as a personal development server in the cloud:
+
+1. **You don't SSH in** — You send signed JSON requests
+2. **You don't manage it** — Kubernetes handles lifecycle
+3. **You don't share it** — One wallet, one pod
+4. **You can't exfiltrate from it** — Secrets are mounted, not accessible
+
+## High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         permaweb.live                                    │
+│                      (Kubernetes Cluster)                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                    Ingress / DNS                                  │    │
+│  │   *.permaweb.live → Pod subdomains                                │    │
+│  │   api.permaweb.live → Gateway (management API)                    │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                    │                                     │
+│                         Subdomain Routing                                │
+│                                    │                                     │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐         │
+│  │   Pod 1    │  │   Pod 2    │  │   Pod 3    │  │   Pod N    │         │
+│  │            │  │            │  │            │  │            │         │
+│  │ abc123.    │  │ xyz789.    │  │ def456.    │  │ pod-id.    │         │
+│  │ permaweb.live│ │ permaweb.live│ │ permaweb.live│ │ permaweb.live│    │
+│  │            │  │            │  │            │  │            │         │
+│  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │        │
+│  │ │HTTPSig │ │  │ │HTTPSig │ │  │ │HTTPSig │ │  │ │HTTPSig │ │        │
+│  │ │Verify  │ │  │ │Verify  │ │  │ │Verify  │ │  │ │Verify  │ │        │
+│  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │        │
+│  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │        │
+│  │ │OpenCode│ │  │ │OpenCode│ │  │ │OpenCode│ │  │ │OpenCode│ │        │
+│  │ │(Agent) │ │  │ │(Agent) │ │  │ │(Agent) │ │  │ │(Agent) │ │        │
+│  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │        │
+│  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │        │
+│  │ │Dev Tools│ │  │ │Dev Tools│ │  │ │Dev Tools│ │  │ │Dev Tools│ │        │
+│  │ │git,curl│ │  │ │git,curl│ │  │ │git,curl│ │  │ │git,curl│ │        │
+│  │ │brew... │ │  │ │brew... │ │  │ │brew... │ │  │ │brew... │ │        │
+│  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │        │
+│  │            │  │            │  │            │  │            │         │
+│  │ Wallet: A  │  │ Wallet: B  │  │ Wallet: C  │  │ Wallet: N  │         │
+│  └────────────┘  └────────────┘  └────────────┘  └────────────┘         │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                    Gateway Service                                │    │
+│  │   - Wallet authentication (Arweave, RSA, ECDSA)                  │    │
+│  │   - Pod lifecycle (create/delete/status) via api.permaweb.live   │    │
+│  │   - Subdomain provisioning (pod-id.permaweb.live)                 │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                    Secret Store                                  │    │
+│  │   - LLM API keys (admin-provided, mounted securely)              │    │
+│  │   - Wallet → Pod subdomain mapping                                │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                    Persistent Storage                             │    │
+│  │   - User workspaces (git repos, files)                           │    │
+│  │   - Session data (OpenCode state)                                 │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## Components
+
+### Gateway Service (`api/`)
+
+A thin Express service that handles pod lifecycle:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/auth/nonce` | Get challenge for wallet signature |
+| `POST` | `/api/auth/verify` | Verify signature, get session token |
+| `POST` | `/api/pods` | Create a new pod |
+| `GET` | `/api/pods` | List pods for authenticated user |
+| `GET` | `/api/pods/:id` | Get pod status |
+| `DELETE` | `/api/pods/:id` | Delete a pod |
+
+**The gateway never sees request payloads.** It only knows:
+- Which wallet owns which pod
+- Pod status (creating, running, stopped, error)
+- Pod subdomain
+
+### Frontend (`frontend/`)
+
+React + Vite application that:
+- Connects wallet (Arweave, MetaMask, etc.)
+- Signs challenges with wallet
+- Displays pod list
+- Creates/deletes pods
+- Streams JSONL responses
+
+### HTTPSig Sidecar (`opencode-sidecar/`)
+
+Node.js service (port 3001) that:
+- Verifies HTTPSig signatures (RFC 9421)
+- Rejects unauthorized requests (401)
+- Forwards valid requests to OpenCode
+- Returns JSONL stream
+
+### OpenCode Container (`images/opencode-base/`)
+
+Docker image containing:
+- OpenCode (agent harness)
+- git, curl, wget
+- brew (package manager)
+- Node.js, Python, Rust, Go
+- Standard dev tools
+
+## Request Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         REQUEST FLOW                                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. User authenticates at api.permaweb.live                             │
+│     └── Wallet signature → Gateway creates pod                          │
+│     └── Pod ID: abc123 → Subdomain: abc123.permaweb.live                │
+│                                                                         │
+│  2. User sends signed JSON to abc123.permaweb.live                      │
+│     └── Request: { "id": "req_1", "method": "message", ... }            │
+│     └── Headers: Signature: keyId="owner", ...                          │
+│                                                                         │
+│  3. Ingress routes to pod's HTTPSig sidecar                            │
+│     └── *.permaweb.live → user-pod service                              │
+│                                                                         │
+│  4. HTTPSig sidecar verifies signature                                 │
+│     └── Extract keyId from signature                                    │
+│     └── Compare with owner wallet address                               │
+│     └── If valid → forward to OpenCode                                 │
+│     └── If invalid → 401 Unauthorized                                   │
+│                                                                         │
+│  5. OpenCode processes request                                          │
+│     └── Reads from /secrets/llm/ for LLM calls                          │
+│     └── Executes in /home/opencode workspace                            │
+│     └── Returns JSONL stream                                            │
+│                                                                         │
+│  6. Response streams back to user                                       │
+│     └── {"type":"assistant_message", ...}                               │
+│     └── {"type":"tool_use", ...}                                        │
+│     └── {"type":"done"}                                                 │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## Tech Stack
+
+| Component | Technology |
+|------------|-------------|
+| Orchestration | Kubernetes (Kind/Minikube for dev) |
+| Container Runtime | containerd |
+| Ingress | NGINX or Traefik |
+| Frontend | Vite + React |
+| Auth | HTTPSig (RFC 9421) |
+| Secrets | K8s Secrets |
+| Storage | PVC + Git repositories |
+| Database | PostgreSQL (pod metadata) |
+
+## What's Next?
+
+- [Security Model](/security-model) — HTTPSig and secrets
+- [Subdomain Routing](/subdomain-routing) — DNS and ingress
+- [API Reference](/api-reference) — All endpoints

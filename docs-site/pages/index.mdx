@@ -1,0 +1,74 @@
+# Welcome to Permaweb OS
+
+A Kubernetes-based platform where each user connects with their wallet, spawns a personal OpenCode pod, and interacts through cryptographically signed requests. **Your pod, your code, your keys.**
+
+## Why Permaweb OS?
+
+| Traditional SaaS | Permaweb OS |
+|-----------------|-------------|
+| User account + password | Wallet = identity |
+| Shared infrastructure | Your own pod |
+| API keys in their database | Admin provides LLM keys (never exposed) |
+| They see your conversations | Only you see your conversations |
+| Trust them with your data | You control your data |
+
+## The Flow
+
+```
+1. Connect Wallet     → Sign challenge with Arweave/Ethereum/RSA
+2. Create Pod         → Spawn personal OpenCode container
+3. Send Signed Request → HTTPSig-signed JSON to your pod subdomain
+4. Stream Response    → JSONL events stream back to you
+```
+
+## Architecture at a Glance
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     permaweb.live                            │
+├─────────────────────────────────────────────────────────────┤
+│  api.permaweb.live  ←  Gateway (create/delete pods)         │
+│                                                              │
+│  abc123.permaweb.live  ←  Your Pod                          │
+│  ├── HTTPSig Sidecar (verifies your signature)              │
+│  └── OpenCode (processes requests, uses admin's LLM keys)   │
+│                                                              │
+│  xyz789.permaweb.live  ←  Another Pod                       │
+│  └── ...                                                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Key Concepts
+
+- **Wallet Authentication** — Connect with Arweave, RSA, ECDSA, or Ethereum wallets
+- **HTTPSig Verification** — RFC 9421 compliant request signing
+- **Per-Pod Isolation** — Each user gets their own container
+- **Admin-Provided LLM Keys** — Users don't need their own API keys
+- **Subdomain Routing** — Each pod gets `{pod-id}.permaweb.live`
+
+## Quick Links
+
+- [Quick Start](/getting-started) — Build your first app in 5 minutes
+- [Cluster Setup](/cluster-setup) — Deploy to Kubernetes
+- [Frontend Guide](/frontend-quickstart) — React/Vue integration
+- [Agent Integration](/agent-integration) — Agents using pods
+- [API Reference](/api-reference) — All endpoints documented
+
+## Status
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 0 | Foundation | ✅ Complete |
+| Phase 1 | Core Pod Infrastructure | ✅ Complete |
+| Phase 2 | Authentication | 🔄 In Progress |
+| Phase 3 | LLM Integration | ⏳ Planned |
+| Phase 4 | GitHub Integration | ⏳ Planned |
+| Phase 5 | Production | ⏳ Planned |
+
+## Contributing
+
+We welcome contributions! See the [GitHub repository](https://github.com/twilson63/permaweb-os) for more details.
+
+## License
+
+MIT License — see [LICENSE](https://github.com/twilson63/permaweb-os/blob/main/LICENSE) for details.

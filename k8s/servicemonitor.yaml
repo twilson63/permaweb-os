@@ -1,0 +1,125 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: web-os-api
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-api
+    app.kubernetes.io/part-of: web-os
+    release: prometheus  # Adjust this to match your Prometheus Operator release label
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web-os-api
+  namespaceSelector:
+    matchNames:
+      - web-os
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: web-os-opencode-sidecar
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-opencode-sidecar
+    app.kubernetes.io/part-of: web-os
+    release: prometheus  # Adjust this to match your Prometheus Operator release label
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web-os-opencode-sidecar
+  namespaceSelector:
+    matchNames:
+      - web-os
+  endpoints:
+    - port: httpsig-http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+# PrometheusRule for alerting (optional)
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: web-os-alerts
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os
+    release: prometheus  # Adjust this to match your Prometheus Operator release label
+spec:
+  groups:
+    - name: web-os.rules
+      rules:
+        # Alert on high error rate
+        - alert: WebOSHighErrorRate
+          expr: |
+            sum(rate(webos_http_requests_total{status=~"5.."}[5m])) by (path)
+            /
+            sum(rate(webos_http_requests_total[5m])) by (path)
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High error rate for {{ $labels.path }}"
+            description: "Error rate is {{ $value | humanizePercentage }} for path {{ $labels.path }}"
+
+        # Alert on high authentication failure rate
+        - alert: WebOSHighAuthFailures
+          expr: |
+            sum(rate(webos_auth_failures_total[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High authentication failure rate"
+            description: "Authentication failures are occurring at {{ $value }} per second"
+
+        # Alert on slow requests
+        - alert: WebOSSlowRequests
+          expr: |
+            histogram_quantile(0.99, rate(webos_http_request_duration_seconds_bucket[5m])) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Slow HTTP requests detected"
+            description: "99th percentile latency is {{ $value | humanizeDuration }}"
+
+        # Alert on high HTTPSig verification failures
+        - alert: WebOSHighHTTPSigFailures
+          expr: |
+            sum(rate(webos_httpsig_verifications_total{result="failure"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High HTTPSig verification failures"
+            description: "HTTPSig verification failures are occurring at {{ $value }} per second"
+
+        # Alert on replay attack rejections
+        - alert: WebOSReplayAttacks
+          expr: |
+            rate(webos_replay_rejections_total[5m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Replay attacks detected"
+            description: "Replay attack rejections are occurring at {{ $value }} per second"
+
+        # Alert on pods without scaling capacity
+        - alert: WebOSPodsAtCapacity
+          expr: |
+            webos_pods_total > 50
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High number of active pods"
+            description: "There are {{ $value }} active pods. Consider scaling infrastructure."

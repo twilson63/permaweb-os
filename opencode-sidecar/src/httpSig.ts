@@ -3,6 +3,45 @@ import { verifyMessage } from "ethers";
 import { verify, type Parameters, type RequestLike } from "http-message-sig";
 
 /**
+ * Validates an Arweave wallet address format.
+ *
+ * Arweave addresses are Base64URL-encoded 256-bit values,
+ * resulting in 43 characters.
+ *
+ * @param address - Candidate address string.
+ * @returns `true` if the address matches Arweave format.
+ */
+export function isValidArweaveAddress(address: string): boolean {
+  return /^[A-Za-z0-9_-]{43}$/.test(address);
+}
+
+/**
+ * Validates an Ethereum wallet address format.
+ *
+ * @param address - Candidate address string.
+ * @returns `true` if the address matches Ethereum format.
+ */
+export function isValidEthereumAddress(address: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
+}
+
+/**
+ * Detects wallet type from address format.
+ *
+ * @param address - Wallet address to analyze.
+ * @returns 'arweave', 'ethereum', or null if unrecognized.
+ */
+export function detectWalletType(address: string): "arweave" | "ethereum" | null {
+  if (isValidEthereumAddress(address)) {
+    return "ethereum";
+  }
+  if (isValidArweaveAddress(address)) {
+    return "arweave";
+  }
+  return null;
+}
+
+/**
  * Replay attack prevention cache.
  *
  * Tracks recently seen signatures to prevent replay attacks within
@@ -75,9 +114,11 @@ export function clearReplayCache(): void {
 export type HttpSigAlgorithm =
   | "rsa-v1_5-sha256"
   | "rsa-pss-sha512"
+  | "rsa-pss-sha256"
   | "ecdsa-p256-sha256"
   | "ecdsa-p384-sha384"
-  | "eth-personal-sign";
+  | "eth-personal-sign"
+  | "arweave-rsa-pss-sha256";
 
 /**
  * Function contract used to resolve a public key by key identifier.
@@ -107,6 +148,19 @@ function getRequestHeader(request: RequestLike, name: string): string | undefine
 
 /**
  * Ensures Signature-Input declares `content-digest` among covered components.
+ *
+ * SECURITY: This is the first layer of content-digest binding defense.
+ * Combined with the cryptographic verification in verifyHttpMessageSignature(),
+ * this prevents man-in-the-middle attacks where an attacker could:
+ * 1. Intercept a valid signed request
+ * 2. Change the body
+ * 3. Update the content-digest header
+ * 4. The original signature would still be valid (if not cryptographically bound)
+ *
+ * The three-layer defense:
+ * 1. This check: content-digest MUST be declared in Signature-Input
+ * 2. verify() from http-message-sig: signature MUST cryptographically cover all declared components
+ * 3. validateContentDigest() in index.ts: body MUST match the content-digest value
  *
  * @param request - Request-like payload containing Signature-Input.
  * @returns `true` when content-digest is explicitly covered.
@@ -224,9 +278,11 @@ function parseAlgorithm(value: unknown): HttpSigAlgorithm | null {
   switch (algorithm) {
     case "rsa-v1_5-sha256":
     case "rsa-pss-sha512":
+    case "rsa-pss-sha256":
     case "ecdsa-p256-sha256":
     case "ecdsa-p384-sha384":
     case "eth-personal-sign":
+    case "arweave-rsa-pss-sha256":
       return algorithm;
     default:
       return null;
@@ -300,6 +356,19 @@ function verifyByAlgorithm(
         },
         signature,
       );
+    case "rsa-pss-sha256":
+    case "arweave-rsa-pss-sha256":
+      // Both use RSA-PSS with SHA-256
+      return verifyDigestSignature(
+        "sha256",
+        payload,
+        {
+          key: publicKey,
+          padding: constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: constants.RSA_PSS_SALTLEN_DIGEST,
+        },
+        signature,
+      );
     case "ecdsa-p256-sha256":
       return verifyDigestSignature("sha256", payload, publicKey, signature);
     case "ecdsa-p384-sha384":
@@ -311,6 +380,20 @@ function verifyByAlgorithm(
 
 /**
  * Verifies HTTP Message Signatures for incoming requests.
+ *
+ * SECURITY: This function provides cryptographic binding between the signature
+ * and the content-digest, preventing tampering attacks.
+ *
+ * The security model has three layers:
+ * 1. hasContentDigestSignatureComponent: Ensures content-digest is DECLARED in Signature-Input
+ * 2. verify() from http-message-sig: Cryptographically verifies signature covers ALL declared components
+ * 3. validateContentDigest() in index.ts: Validates body matches the content-digest VALUE
+ *
+ * Attack prevention:
+ * - Attacker changes body + updates digest → Layer 3 catches this
+ * - Attacker removes content-digest from Signature-Input → Layer 1 catches this
+ * - Attacker keeps Signature-Input but changes digest value → Layer 2 catches this
+ *   (signature won't verify because it was computed over original digest)
  *
  * @param request - Request-like object containing method, url, and headers.
  * @param resolvePublicKey - Callback to resolve key material for a keyId.

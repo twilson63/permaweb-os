@@ -1,0 +1,356 @@
+# Agent Integration
+
+How to use Permaweb OS pods from AI agents and automation tools.
+
+## Overview
+
+Agents (like OpenCode, Claude, GPT) can interact with pods through the same API as users. The key differences:
+
+1. **Service accounts** — Agents may use service accounts instead of user wallets
+2. **Session persistence** — Agents may need to persist sessions across restarts
+3. **Batch operations** — Agents may send multiple requests in sequence
+
+## Authentication for Agents
+
+### Option 1: Service Account
+
+```typescript
+// Agent uses a service account keypair
+import { Wallet } from 'ethers';
+
+// Generate or load service account
+const serviceAccount = Wallet.createRandom();
+// Or load from environment: const serviceAccount = new Wallet(process.env.AGENT_PRIVATE_KEY);
+
+async function authenticateAgent() {
+  // Get nonce
+  const nonceRes = await fetch('https://api.permaweb.live/api/auth/nonce', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: serviceAccount.address })
+  });
+  const { nonce } = await nonceRes.json();
+
+  // Sign and verify
+  const signature = await serviceAccount.signMessage(nonce);
+  const verifyRes = await fetch('https://api.permaweb.live/api/auth/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      walletAddress: serviceAccount.address,
+      signature,
+      nonce
+    })
+  });
+  const { sessionToken, pod } = await verifyRes.json();
+
+  return { sessionToken, pod };
+}
+```
+
+### Option 2: Delegated Access
+
+```typescript
+// User delegates access to agent via signed message
+async function delegatedAccess(userWallet: ethers.Signer, agentAddress: string) {
+  // User signs a delegation message
+  const delegation = {
+    agent: agentAddress,
+    expires: Date.now() + 3600000, // 1 hour
+    scope: 'read:pod write:pod'
+  };
+  
+  const signature = await userWallet.signMessage(JSON.stringify(delegation));
+  
+  // Agent uses delegation to access user's pod
+  const res = await fetch('https://api.permaweb.live/api/auth/delegate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      delegation,
+      signature,
+      userAddress: await userWallet.getAddress()
+    })
+  });
+  
+  return res.json(); // { sessionToken, pod }
+}
+```
+
+## Agent SDK
+
+### Install
+
+```bash
+npm install @permaweb/agent-sdk
+```
+
+### Usage
+
+```typescript
+import { PermawebAgent } from '@permaweb/agent-sdk';
+
+// Initialize agent with service account
+const agent = new PermawebAgent({
+  privateKey: process.env.AGENT_PRIVATE_KEY,
+  // Or use environment variable: PERMAWEB_AGENT_KEY
+});
+
+// Create or get pod
+const pod = await agent.getOrCreatePod({
+  model: 'anthropic/claude-3-5-haiku'
+});
+
+console.log('Pod ready:', pod.subdomain);
+
+// Send message and stream response
+const stream = await agent.sendMessage({
+  podId: pod.id,
+  content: 'Create a hello.ts file with a greeting function'
+});
+
+for await (const event of stream) {
+  switch (event.type) {
+    case 'text':
+      console.log('Agent:', event.text);
+      break;
+    case 'tool_use':
+      console.log('Tool:', event.tool, event.args);
+      break;
+    case 'tool_result':
+      console.log('Result:', event.result);
+      break;
+    case 'done':
+      console.log('Complete!');
+      break;
+    case 'error':
+      console.error('Error:', event.message);
+      break;
+  }
+}
+
+// Multi-turn conversation
+const sessionId = `session_${Date.now()}`;
+
+await agent.sendMessage({
+  podId: pod.id,
+  content: 'Create a utils directory',
+  sessionId
+});
+
+await agent.sendMessage({
+  podId: pod.id,
+  content: 'Add a date formatting function to utils/date.ts',
+  sessionId
+});
+```
+
+## Session Management
+
+### Persistent Sessions
+
+```typescript
+// Save session state for later use
+const session = await agent.createSession({
+  podId: pod.id,
+  sessionId: 'my-project-session'
+});
+
+// Store session ID
+localStorage.setItem('permaweb-session', session.id);
+
+// Resume later
+const sessionId = localStorage.getItem('permaweb-session');
+await agent.resumeSession(sessionId);
+```
+
+### Session Storage
+
+```typescript
+// Agent persists sessions to pod filesystem
+// Located at: /home/opencode/.sessions/<session-id>.json
+
+// Agent can store:
+// - Conversation history
+// - Working context
+// - Project state
+```
+
+## Batch Operations
+
+```typescript
+// Execute multiple requests in sequence
+const tasks = [
+  'Create a project directory',
+  'Initialize package.json',
+  'Add TypeScript',
+  'Create src/index.ts',
+  'Add build script'
+];
+
+for (const task of tasks) {
+  const stream = await agent.sendMessage({
+    podId: pod.id,
+    content: task
+  });
+  
+  // Wait for completion
+  for await (const event of stream) {
+    if (event.type === 'done') break;
+    if (event.type === 'error') throw new Error(event.message);
+  }
+}
+
+console.log('All tasks complete!');
+```
+
+## JSONL Stream Handling
+
+```typescript
+// Complete event type reference
+interface StreamEvent {
+  type: string;
+  id?: string;
+  sessionId?: string;
+  [key: string]: any;
+}
+
+interface TextEvent extends StreamEvent {
+  type: 'text';
+  text: string;
+}
+
+interface ToolUseEvent extends StreamEvent {
+  type: 'tool_use';
+  tool: string;
+  args: Record<string, any>;
+}
+
+interface ToolResultEvent extends StreamEvent {
+  type: 'tool_result';
+  tool: string;
+  result: string;
+}
+
+interface DoneEvent extends StreamEvent {
+  type: 'done';
+  status: 'success' | 'error';
+}
+
+interface ErrorEvent extends StreamEvent {
+  type: 'error';
+  code: string;
+  message: string;
+}
+```
+
+## Integration Examples
+
+### OpenCode Agent Harness
+
+```typescript
+// In your OpenCode configuration
+import { PermawebAgent } from '@permaweb/agent-sdk';
+
+const permawebAgent = new PermawebAgent({
+  privateKey: process.env.PERMAWEB_AGENT_KEY
+});
+
+export default {
+  name: 'my-agent',
+  async initialize() {
+    this.pod = await permawebAgent.getOrCreatePod();
+  },
+  async processMessage(content: string) {
+    const stream = await permawebAgent.sendMessage({
+      podId: this.pod.id,
+      content
+    });
+    
+    let response = '';
+    for await (const event of stream) {
+      if (event.type === 'text') {
+        response += event.text;
+      }
+    }
+    return response;
+  }
+};
+```
+
+### CI/CD Integration
+
+```yaml
+# .github/workflows/permaweb-agent.yml
+name: Permaweb Agent
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  agent:
+    if: github.event.comment.body == '/agent'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Install Dependencies
+        run: npm ci
+      
+      - name: Run Agent
+        env:
+          PERMAWEB_AGENT_KEY: ${{ secrets.PERMAWEB_AGENT_KEY }}
+        run: npx permaweb-agent run --task "Review PR comments and suggest improvements"
+```
+
+## Error Handling
+
+```typescript
+// Common error codes
+const ERROR_CODES = {
+  // Authentication errors
+  'AUTH_INVALID_SIGNATURE': 'Signature verification failed',
+  'AUTH_EXPIRED_NONCE': 'Nonce has expired',
+  'AUTH_REPLAY_DETECTED': 'Request was already processed',
+  
+  // Pod errors
+  'POD_NOT_FOUND': 'Pod does not exist',
+  'POD_NOT_RUNNING': 'Pod is not in running state',
+  'POD_LIMIT_EXCEEDED': 'Pod limit for wallet exceeded',
+  
+  // Request errors
+  'REQUEST_INVALID_FORMAT': 'Invalid JSON format',
+  'REQUEST_MISSING_FIELD': 'Required field missing',
+  'REQUEST_TOO_LARGE': 'Request body exceeds size limit',
+  
+  // LLM errors
+  'LLM_KEY_NOT_FOUND': 'No LLM key configured',
+  'LLM_RATE_LIMITED': 'LLM API rate limit exceeded',
+  'LLM_ERROR': 'LLM provider returned error'
+};
+
+try {
+  const stream = await agent.sendMessage({ podId, content });
+  // ...
+} catch (error) {
+  if (error.code === 'AUTH_INVALID_SIGNATURE') {
+    // Re-authenticate
+    await agent.authenticate();
+    // Retry
+    return agent.sendMessage({ podId, content });
+  }
+  throw error;
+}
+```
+
+## What's Next?
+
+- [API Reference](/api-reference) — All endpoints
+- [JSONL Events](/jsonl-events) — Complete event reference
+- [HTTPSig Signing](/http-sig) — Request signing details

@@ -1,0 +1,175 @@
+---
+# RBAC configuration for Web OS API
+# Enables the API to manage wallet-scoped secrets for LLM keys and owner keys
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web-os-api
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-api
+    app.kubernetes.io/part-of: web-os
+---
+# Role: Grants permission to manage LLM key secrets and owner key secrets
+# Restricted to secrets matching llm-keys-* and owner-key-* patterns
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: web-os-api
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-api
+    app.kubernetes.io/part-of: web-os
+rules:
+  # Secrets management - limited to wallet-scoped secrets
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+    # Note: Cannot use resourceNames with wildcards in Role
+    # Instead, we use a separate admission controller or OPA policy
+    # to restrict access to llm-keys-* and owner-key-* secrets only
+    # For development, this is acceptable. For production, consider:
+    # 1. Open Policy Agent (OPA) Gatekeeper
+    # 2. Kyverno policies
+    # 3. External secret management (HashiCorp Vault)
+    #
+    # Secrets managed:
+    # - llm-keys-<wallet-hash> - LLM API keys per wallet
+    # - owner-key-<key-id> - Owner public keys per wallet (HTTPSig verification)
+---
+# RoleBinding: Binds the role to the API service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: web-os-api
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-api
+    app.kubernetes.io/part-of: web-os
+subjects:
+  - kind: ServiceAccount
+    name: web-os-api
+    namespace: web-os
+roleRef:
+  kind: Role
+  name: web-os-api
+  apiGroup: rbac.authorization.k8s.io
+---
+# NetworkPolicy: Restricts pod-to-pod communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-os-api
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-api
+    app.kubernetes.io/part-of: web-os
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: web-os-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow ingress from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3000
+          protocol: TCP
+    # Allow ingress from same namespace (debugging/admin)
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow Kubernetes API access
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # Allow egress to external LLM APIs (OpenAI, Anthropic, Groq)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+---
+# NetworkPolicy for user pods: Restricts to only their secret
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: user-pod-isolation
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-user-pod
+    app.kubernetes.io/part-of: web-os
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: web-os-user-pod
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow ingress from sidecar only (same pod)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: web-os-user-pod
+      ports:
+        - port: 4096  # OpenCode
+          protocol: TCP
+        - port: 3001  # HTTPSig Sidecar
+          protocol: TCP
+    # Allow ingress from API for health checks
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: web-os-api
+      ports:
+        - port: 3001
+          protocol: TCP
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow egress to external LLM APIs only
+    # Blocks internal cluster access for security
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP

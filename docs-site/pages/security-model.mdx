@@ -1,0 +1,251 @@
+# Security Model
+
+Permaweb OS uses cryptographic signatures for authentication and isolation for security.
+
+## Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            SECURITY BOUNDARIES                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ┌──────────────────┐                                                        │
+│   │   User's Wallet   │  ← Identity lives here                               │
+│   │   (private key)   │  ← Never shared, never leaves device                 │
+│   └──────────────────┘                                                        │
+│            │                                                                  │
+│            │ Signs request                                                    │
+│            ▼                                                                  │
+│   ┌──────────────────┐                                                        │
+│   │   HTTP Request    │  ← Signed payload                                     │
+│   │   + Signature     │  ← Includes keyId (wallet address)                    │
+│   └──────────────────┘                                                        │
+│            │                                                                  │
+│            ▼                                                                  │
+│   ┌──────────────────┐                                                        │
+│   │  Pod Subdomain    │  ← {pod-id}.permaweb.live                               │
+│   │                   │  ← Direct access, no gateway                          │
+│   └──────────────────┘                                                        │
+│            │                                                                  │
+│            ▼                                                                  │
+│   ┌──────────────────┐                                                        │
+│   │  HTTPSig Sidecar  │  ← Verifies signature                                 │
+│   │                   │  ← Checks keyId == pod owner                           │
+│   │                   │  ← Rejects if mismatch (401)                           │
+│   └──────────────────┘                                                        │
+│            │                                                                  │
+│            │ Only if valid                                                     │
+│            ▼                                                                  │
+│   ┌──────────────────┐                                                        │
+│   │    OpenCode       │  ← Processes request                                  │
+│   │                   │  ← Reads /secrets/llm/ for API key                    │
+│   │                   │  ← Never exposes secrets to user                      │
+│   └──────────────────┘                                                        │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Key Design Decisions
+
+### 1. Wallet = Identity
+
+No usernames, no passwords. Your wallet is your identity.
+
+```
+Traditional: User → Password → Database (they see everything)
+Permaweb OS: User → Wallet Signature → Your Pod
+```
+
+### 2. Per-Pod Isolation
+
+Each wallet gets exactly one pod. Each pod is:
+
+- **Isolated** — Container-level isolation
+- **Non-root** — Runs as UID 1000
+- **Resource-limited** — CPU/Memory quotas enforced
+- **Network-isolated** — No pod-to-pod communication
+
+### 3. HTTPSig for Authentication
+
+We use HTTP Message Signatures (RFC 9421) because:
+
+- **Asymmetric crypto** — No shared secrets
+- **Standard** — RFC 9421 is an IETF standard
+- **Flexible** — Works with RSA, ECDSA, Ethereum signatures
+- **Verifiable** — Anyone can verify with the public key
+
+### 4. Admin-Provided LLM Keys
+
+Users don't bring their own API keys. The platform provides them:
+
+```
+Traditional AI Platform:
+  User → Brings own API key → Stored in database → Risk of exposure
+
+Permaweb OS:
+  Admin → Sets cluster-wide LLM keys → Mounted to pods securely
+                                              │
+  User → Creates pod → Uses admin's keys (never sees them)
+                                              │
+  Platform → Tracks usage per wallet → Admin bills accordingly
+```
+
+**Benefits:**
+- Users don't need LLM API keys to get started
+- Admin manages and rotates keys centrally
+- Keys are never exposed to users (mounted read-only)
+- Usage is tracked per wallet for billing
+
+## What's Protected
+
+| Asset | Location | Access |
+|-------|----------|--------|
+| Wallet private key | User's device | Only user |
+| LLM API keys | K8s Secret → `/secrets/llm/` | Only OpenCode container |
+| Pod subdomain | DNS | Public (but requests must be signed) |
+| Request signatures | In-flight | Sidecar validates, then discards |
+| OpenCode state | Pod filesystem | Only that pod's OpenCode |
+
+## What's NOT Protected
+
+| Asset | Why |
+|-------|-----|
+| Pod subdomain | Public by design — anyone can see a pod exists |
+| Pod count | Public — anyone can see how many pods exist |
+| Request timing | Metadata — not critical |
+
+## Secret Management
+
+LLM API keys are stored in Kubernetes Secrets, mounted as files:
+
+```yaml
+volumes:
+  - name: llm-secrets
+    secret:
+      secretName: llm-api-keys
+      
+volumeMounts:
+  - name: llm-secrets
+    mountPath: /secrets/llm
+    readOnly: true  # Read-only!
+```
+
+OpenCode reads from:
+- `/secrets/llm/openai` — OpenAI API key
+- `/secrets/llm/anthropic` — Anthropic API key
+
+**Users never see these values** — they're mounted into the pod, used by OpenCode, and never returned via API.
+
+## Request Signing
+
+Every request to a pod must be signed:
+
+```typescript
+import { signatureHeaders } from 'http-message-sig';
+
+// Create the request
+const request = {
+  id: "req_abc123",
+  method: "message",
+  params: { content: "Create hello.ts" }
+};
+
+// Sign with wallet
+const headers = await signatureHeaders({
+  method: 'POST',
+  url: '/verify',
+  headers: {
+    host: podSubdomain,
+    date: new Date().toUTCString()
+  }
+}, {
+  signer: {
+    keyid: wallet.address,
+    sign: async (data) => {
+      const signature = await wallet.signMessage(data);
+      return Buffer.from(signature.slice(2), 'hex');
+    }
+  }
+});
+
+// Send the request
+const response = await fetch(`https://${podSubdomain}/verify`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Signature': headers.Signature,
+    'Signature-Input': headers['Signature-Input'],
+    'Date': headers.date
+  },
+  body: JSON.stringify(request)
+});
+```
+
+## Replay Protection
+
+The sidecar includes replay protection:
+
+1. **Timestamp check** — Request must be within ±5 minutes
+2. **Nonce check** — Each request must have a unique `id`
+3. **Cache** — Recent request IDs are cached and rejected if reused
+
+```typescript
+// Request must include fresh timestamp and unique ID
+const request = {
+  id: `req_${Date.now()}_${randomUUID()}`,  // Unique ID
+  timestamp: Date.now(),                      // Fresh timestamp
+  method: "message",
+  params: { content: "Hello" }
+};
+```
+
+## Network Security
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Network Policy                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Internet                                                    │
+│      │                                                       │
+│      ▼                                                       │
+│  Ingress (HTTPS)                                             │
+│      │                                                       │
+│      ├─── api.permaweb.live → Gateway Service               │
+│      │                                               │        │
+│      └─── *.permaweb.live → Pod Services                    │
+│                                      │                       │
+│                                      ▼                       │
+│                              HTTPSig Sidecar                 │
+│                                      │                       │
+│                                      ▼                       │
+│                              OpenCode Container              │
+│                                                              │
+│  Rules:                                                      │
+│  - Pod → Internet: Allowed (for git, npm, etc.)             │
+│  - Pod → Pod: Blocked                                        │
+│  - Pod → Gateway: Blocked                                    │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Best Practices
+
+### For Users
+
+1. **Keep your private key secure** — Never share it
+2. **Use a hardware wallet** — For production use
+3. **Verify subdomain** — Always check you're sending to the correct pod
+
+### For Cluster Admins
+
+1. **Rotate LLM keys regularly** — Update the K8s Secret
+2. **Monitor usage** — Track token consumption per wallet
+3. **Set resource limits** — Prevent runaway pods
+4. **Enable audit logging** — Track all API calls
+
+## What's Next?
+
+- [HTTPSig Signing](/http-sig) — Deep dive into request signing
+- [Subdomain Routing](/subdomain-routing) — DNS and ingress
+- [API Reference](/api-reference) — All endpoints

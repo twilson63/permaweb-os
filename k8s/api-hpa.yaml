@@ -1,0 +1,84 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-api
+    app.kubernetes.io/part-of: web-os
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    # CPU-based scaling
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Memory-based scaling
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      # Allow quick scale down when load decreases
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      # Rapid scale up when load increases
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
+---
+# Custom metric for request latency (requires Prometheus Adapter)
+# This is commented out by default as it requires Prometheus Adapter to be installed
+# apiVersion: autoscaling/v2
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: api-hpa-latency
+#   namespace: web-os
+#   labels:
+#     app.kubernetes.io/name: web-os-api
+#     app.kubernetes.io/part-of: web-os
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: api
+#   minReplicas: 2
+#   maxReplicas: 10
+#   metrics:
+#     - type: Pods
+#       pods:
+#         metric:
+#           name: webos_http_request_duration_seconds
+#         target:
+#           type: AverageValue
+#           averageValue: 500m  # 500ms average response time
+# ---
+# Note: To enable latency-based scaling, you need to:
+# 1. Install Prometheus Adapter (prometheus-adapter)
+# 2. Configure custom metrics rules in the adapter
+# 3. Uncomment this HPA and the custom metric configuration

@@ -1,0 +1,205 @@
+# Cluster Setup
+
+Deploy Permaweb OS to Kubernetes.
+
+## Prerequisites
+
+- [Docker](https://www.docker.com/) 20.10+
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) 1.28+
+- [Kind](https://kind.sigs.k8s.io/) or [Minikube](https://minikube.sigs.k8s.io/)
+- [Node.js](https://nodejs.org/) 18+
+- [Bun](https://bun.sh/) (for build scripts)
+
+## Quick Start
+
+### 1. Clone and Setup
+
+```bash
+git clone https://github.com/twilson63/permaweb-os.git
+cd permaweb-os
+
+# Start local Kubernetes cluster
+./scripts/setup.sh
+```
+
+### 2. Configure LLM Keys
+
+```bash
+# Create secret for LLM API keys
+kubectl create secret generic llm-api-keys \
+  --from-literal=openai=sk-YOUR-OPENAI-KEY \
+  --from-literal=anthropic=sk-ant-YOUR-ANTHROPIC-KEY \
+  -n web-os
+```
+
+**Important:** These keys are available to ALL pods in the cluster. Users never see or manage these keys directly.
+
+### 3. Deploy Gateway and Frontend
+
+```bash
+# Build and deploy
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/api-deployment.yaml
+kubectl apply -f k8s/frontend-deployment.yaml
+kubectl apply -f k8s/ingress.yaml
+```
+
+### 4. Verify
+
+```bash
+# Check cluster status
+kubectl get pods -n web-os
+
+# Check pod health
+curl http://api.web-os.local/health
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | API server port | `3000` |
+| `SESSION_SECRET` | Session signing secret | Required |
+| `GITHUB_CLIENT_ID` | GitHub OAuth client ID | Optional |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth secret | Optional |
+| `GITHUB_REDIRECT_URI` | GitHub OAuth callback URL | Optional |
+| `OPENCODE_BIN` | Path to OpenCode binary | `/Users/tron/.opencode/bin/opencode` |
+| `USAGE_STORE_PATH` | Path to usage data file | `./data/usage-store.json` |
+
+### Kubernetes Configuration
+
+```yaml
+# k8s/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-os-config
+  namespace: web-os
+data:
+  POD_BASE_DOMAIN: "pods.permaweb.live"
+  API_DOMAIN: "api.permaweb.live"
+```
+
+## Local Development
+
+### Using Kind
+
+```bash
+# Create cluster
+kind create cluster --name web-os
+
+# Load images
+kind load docker-image web-os-api:latest --name web-os
+kind load docker-image web-os-frontend:latest --name web-os
+kind load docker-image web-os-opencode:latest --name web-os
+
+# Apply manifests
+kubectl apply -f k8s/
+```
+
+### Using Minikube
+
+```bash
+# Start cluster
+minikube start --driver=docker
+
+# Enable ingress
+minikube addons enable ingress
+
+# Build images
+eval $(minikube docker-env)
+docker build -t web-os-api ./api
+docker build -t web-os-frontend ./frontend
+docker build -t web-os-opencode ./images/opencode-base
+
+# Apply manifests
+kubectl apply -f k8s/
+```
+
+## Production Deployment
+
+### DigitalOcean
+
+```bash
+# Use the deployment script
+./scripts/deploy-digitalocean.sh
+```
+
+See [DEPLOY.md](https://github.com/twilson63/permaweb-os/blob/main/DEPLOY.md) for detailed DigitalOcean deployment instructions.
+
+### DNS Configuration
+
+Configure DNS for your domain:
+
+```
+api.permaweb.live      A     <gateway-ip>
+*.pods.permaweb.live   A     <ingress-ip>
+```
+
+### TLS Certificates
+
+```bash
+# Install cert-manager
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+
+# Create wildcard certificate
+kubectl apply -f k8s/certificate.yaml
+```
+
+## Resource Requirements
+
+| Component | CPU | Memory |
+|-----------|-----|---------|
+| Gateway API | 100m | 128Mi |
+| Frontend | 100m | 128Mi |
+| OpenCode Pod | 500m | 1Gi |
+| HTTPSig Sidecar | 100m | 128Mi |
+
+## Monitoring
+
+```bash
+# View logs
+kubectl logs -f deployment/web-os-api -n web-os
+
+# Check pod status
+kubectl get pods -n web-os -w
+
+# Describe pod
+kubectl describe pod <pod-id> -n web-os
+```
+
+## Troubleshooting
+
+### Pod Not Starting
+
+```bash
+# Check events
+kubectl describe pod <pod-id> -n web-os
+
+# Check logs
+kubectl logs <pod-id> -n web-os
+```
+
+### HTTPSig Verification Failed
+
+- Ensure the request is properly signed
+- Check that the keyId matches the pod owner's wallet address
+- Verify the signature timestamp is within the allowed window
+
+### LLM Key Issues
+
+```bash
+# Verify secret exists
+kubectl get secret llm-api-keys -n web-os
+
+# Check secret is mounted
+kubectl exec <pod-id> -n web-os -- ls /secrets/llm/
+```
+
+## What's Next?
+
+- [Architecture Overview](/architecture) — How it works
+- [Security Model](/security-model) — HTTPSig and secrets
+- [API Reference](/api-reference) — All endpoints

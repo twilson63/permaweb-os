@@ -1,0 +1,317 @@
+# Architecture Decision Records
+
+Key architectural decisions for Permaweb OS.
+
+## Overview
+
+Architecture Decision Records (ADRs) document significant design choices. Each ADR explains the context, decision, and consequences.
+
+## ADR Index
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [ADR-001](#adr-001-wallet-based-authentication) | Wallet-Based Authentication | Accepted |
+| [ADR-002](#adr-002-json-in--jsonl-out-api) | JSON In → JSONL Out API | Accepted |
+| [ADR-003](#adr-003-developer-agent-image) | Developer Agent Image | Accepted |
+| [ADR-004](#adr-004-per-pod-httpsig-verification) | Per-Pod HTTPSig Verification | Accepted |
+| [ADR-005](#adr-005-secret-mount-pattern) | Secret Mount Pattern | Accepted |
+| [ADR-006](#adr-006-per-pod-subdomain) | Per-Pod Subdomain | Accepted |
+
+---
+
+## ADR-001: Wallet-Based Authentication
+
+**Status**: Accepted
+
+### Context
+
+Users need to securely access their personal OpenCode pods. We need an authentication mechanism that is decentralized and works with existing Web3 wallets.
+
+### Decision
+
+Use Arweave wallets (and later RSA/ECDSA) with HTTPSig (RFC 9421) for authentication. The wallet address becomes the pod identifier.
+
+### Consequences
+
+- Users connect with their existing wallet
+- Each wallet maps to exactly one pod
+- All requests must be HTTPSig-signed
+- No username/password system needed
+- Decentralized identity (no central auth provider)
+
+### Alternatives Considered
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Username/Password | Familiar | Centralized, requires password management |
+| OAuth (Google, GitHub) | Easy login | Centralized, privacy concerns |
+| JWT | Simple | Requires shared secret or central authority |
+| HTTPSig + Wallet | Decentralized, no passwords | Requires wallet extension |
+
+---
+
+## ADR-002: JSON In → JSONL Out API
+
+**Status**: Accepted
+
+### Context
+
+OpenCode processes tasks and returns responses. We need a simple, streamable API format that works well with agent harnesses.
+
+### Decision
+
+- **Input**: Single JSON object with method and params
+- **Output**: JSONL stream with typed events
+
+```json
+// Request
+{
+  "id": "req_123",
+  "method": "message",
+  "params": { "content": "Create hello.ts" }
+}
+
+// Response (JSONL stream)
+{"id":"req_123","type":"text","text":"Creating hello.ts..."}
+{"id":"req_123","type":"tool_use","tool":"write","args":{"path":"hello.ts"}}
+{"id":"req_123","type":"tool_result","result":"File created"}
+{"id":"req_123","type":"done","status":"success"}
+```
+
+### Consequences
+
+- Simple to implement and debug
+- Naturally supports streaming
+- Works well with agent harness pattern
+- Easy to add new event types
+- Client can start processing immediately
+
+### Alternatives Considered
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| REST | Familiar | No streaming, request-response only |
+| GraphQL | Flexible queries | Overkill for simple agent API |
+| WebSocket | Bidirectional | Connection management overhead |
+| JSONL | Simple streaming | Line-based parsing required |
+
+---
+
+## ADR-003: Developer Agent Image
+
+**Status**: Accepted
+
+### Context
+
+Users need a complete development environment in their pod to accomplish coding tasks.
+
+### Decision
+
+Base image includes:
+- OpenCode (agent harness)
+- git, curl, wget, common CLIs
+- brew for additional package installation
+- Node.js, Python, Rust, Go (pre-installed or installable)
+
+```dockerfile
+FROM ghcr.io/anomalyco/opencode
+RUN apt-get update && apt-get install -y \
+    git curl wget vim tmux build-essential
+RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+USER 10001
+EXPOSE 4096
+CMD ["opencode", "run"]
+```
+
+### Consequences
+
+- Larger image size (~629MB) but complete dev environment
+- Users can install additional tools via brew
+- No need for custom images per user
+- Security: HTTPSig layer prevents unauthorized access
+
+### Alternatives Considered
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Minimal image | Small size | Limited functionality |
+| Custom images per user | Tailored | Management overhead |
+| Standard dev image | Complete, consistent | Larger size |
+
+---
+
+## ADR-004: Per-Pod HTTPSig Verification
+
+**Status**: Accepted
+
+### Context
+
+We need to secure each pod so only the owner wallet can interact with it.
+
+### Decision
+
+Each pod runs an HTTPSig verification sidecar that:
+- Validates incoming request signatures
+- Extracts wallet address from signature
+- Rejects requests not signed by owner wallet
+
+### Consequences
+
+- Security enforced at pod level
+- Gateway can be simpler (just routing)
+- Compromise of one pod doesn't affect others
+- Clear audit trail per wallet
+- No shared secrets required
+
+### Architecture
+
+```
+┌─────────────────────────────────────┐
+│              Pod                     │
+│                                      │
+│  ┌─────────────┐   ┌─────────────┐  │
+│  │ HTTPSig     │──▶│ OpenCode    │  │
+│  │ Sidecar     │   │ (Agent)     │  │
+│  │ (port 3001) │   │ (port 4096) │  │
+│  └─────────────┘   └─────────────┘  │
+│                                      │
+│  Only requests signed by            │
+│  owner wallet are forwarded         │
+│                                      │
+└─────────────────────────────────────┘
+```
+
+### Alternatives Considered
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Gateway verification | Centralized | Single point of failure, gateway sees all traffic |
+| Per-pod verification | Isolated | More complex pod |
+| mTLS | Strong security | Certificate management overhead |
+
+---
+
+## ADR-005: Secret Mount Pattern
+
+**Status**: Accepted
+
+### Context
+
+LLM API keys need to be available to OpenCode but not exposed to users.
+
+### Decision
+
+- LLM keys stored in K8s Secrets (admin-provided)
+- Mounted as files into pod at `/secrets/llm/`
+- OpenCode reads from mounted files
+- Never returned via API
+
+```yaml
+volumes:
+  - name: llm-secrets
+    secret:
+      secretName: llm-api-keys
+      
+volumeMounts:
+  - name: llm-secrets
+    mountPath: /secrets/llm
+    readOnly: true
+```
+
+### Consequences
+
+- Keys never in environment variables
+- Keys never in API responses
+- Users can't exfiltrate keys
+- OpenCode can use keys for LLM calls
+- Admin manages and rotates keys centrally
+
+### Security Benefits
+
+| Asset | Where | Access |
+|-------|-------|--------|
+| LLM API keys | K8s Secret → `/secrets/llm/` | Only OpenCode container |
+| User conversations | Pod filesystem | Only that pod |
+| Request signatures | In-flight | Sidecar validates, then discards |
+
+### Alternatives Considered
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Environment variables | Simple | Visible in logs, process list |
+| API injection | Dynamic | Requires API to handle secrets |
+| Secret mounting | Secure, K8s native | Requires K8s knowledge |
+
+---
+
+## ADR-006: Per-Pod Subdomain
+
+**Status**: Accepted
+
+### Context
+
+Users need direct access to their pod's API without going through a central gateway for every request.
+
+### Decision
+
+Each pod gets its own subdomain: `{pod-id}.permaweb.live`
+
+- Pod ID is derived from wallet address (e.g., first 8 chars of address hash)
+- DNS/Ingress routes subdomain to specific pod
+- Gateway service only handles pod lifecycle (create/delete) at `api.permaweb.live`
+
+### Consequences
+
+- Direct pod access for lower latency
+- Gateway doesn't need to proxy every request
+- Each pod is independently addressable
+- Simple SSL cert management with wildcard cert for `*.permaweb.live`
+- Clear separation: management API vs pod API
+
+### Example
+
+```
+Wallet: 0xABC123...XYZ
+    │
+    ▼
+Pod ID: abc123 (first 8 chars of hash)
+    │
+    ▼
+Subdomain: abc123.permaweb.live
+```
+
+### Alternatives Considered
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Path-based routing | Simpler DNS | Gateway proxies all traffic |
+| Subdomain routing | Direct access | Requires wildcard DNS/cert |
+| Port-based | No DNS changes | Not practical for web |
+
+---
+
+## Future ADRs
+
+The following ADRs are planned:
+
+- **ADR-007**: Persistent Storage Strategy (PVC vs object storage)
+- **ADR-008**: Multi-Region Deployment
+- **ADR-009**: Rate Limiting and Quotas
+- **ADR-010**: Pod Snapshot/Restore
+
+---
+
+## Contributing
+
+To propose a new ADR:
+
+1. Create a new file in `docs/adr/`
+2. Use the template: `NNNN-title.md`
+3. Submit a pull request
+4. Discuss in the PR comments
+
+## What's Next?
+
+- [Architecture Overview](/architecture) — Full system design
+- [Security Model](/security-model) — Authentication details
+- [API Reference](/api-reference) — All endpoints

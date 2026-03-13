@@ -137,7 +137,7 @@ test("POST /api/pods creates a pod and binds owner wallet", async () => {
     assert.equal(typeof payload.createdAt, "string");
     assert.equal(typeof payload.subdomain, "string");
     assert.match(payload.subdomain, /pods\.local$/);
-    assert.equal(payload.ownerWallet, wallet.address);
+    assert.equal(payload.ownerWallet, wallet.address.toLowerCase());
   } finally {
     await server.close();
   }
@@ -606,7 +606,7 @@ test("POST /api/usage creates a usage record with calculated cost", async () => 
 
     assert.equal(response.status, 201);
     const payload = await response.json();
-    assert.equal(payload.ownerWallet, wallet.address);
+    assert.equal(payload.ownerWallet, wallet.address.toLowerCase());
     assert.equal(payload.model, "openai/gpt-4o-mini");
     assert.equal(payload.promptTokens, 1000);
     assert.equal(payload.completionTokens, 2000);

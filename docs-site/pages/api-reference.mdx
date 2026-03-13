@@ -1,0 +1,406 @@
+# API Reference
+
+Complete reference for all Permaweb OS API endpoints.
+
+## Base URLs
+
+| Environment | URL |
+|-------------|-----|
+| Production | `https://api.permaweb.live` |
+| Staging | `https://api.staging.permaweb.live` |
+| Local | `http://api.web-os.local:3000` |
+
+## Authentication
+
+All endpoints (except `/health`) require authentication via:
+
+1. **Session Token** — `Authorization: Bearer <token>` (for pod lifecycle)
+2. **HTTPSig Signature** — For direct pod requests
+
+## Endpoints
+
+### Health Check
+
+```http
+GET /health
+```
+
+Returns server health status.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "uptime": 86400
+}
+```
+
+---
+
+### Authentication
+
+#### Get Nonce
+
+```http
+POST /api/auth/nonce
+Content-Type: application/json
+
+{
+  "address": "0xABC123..."
+}
+```
+
+Returns a nonce for wallet signing.
+
+**Response:**
+```json
+{
+  "nonce": "nonce_abc123...",
+  "expiresAt": "2026-03-11T11:00:00Z"
+}
+```
+
+**Status Codes:**
+- `200` — Success
+- `400` — Invalid address format
+
+---
+
+#### Verify Signature
+
+```http
+POST /api/auth/verify
+Content-Type: application/json
+
+{
+  "walletAddress": "0xABC123...",
+  "signature": "0x...",
+  "nonce": "nonce_abc123..."
+}
+```
+
+Verifies wallet signature and returns session token.
+
+**Response:**
+```json
+{
+  "sessionToken": "eyJhbGciOiJIUzI1NiIs...",
+  "walletAddress": "0xABC123...",
+  "expiresAt": "2026-03-11T12:00:00Z"
+}
+```
+
+**Status Codes:**
+- `200` — Success
+- `401` — Invalid signature
+- `400` — Expired nonce
+
+---
+
+#### GitHub OAuth
+
+```http
+GET /api/auth/github
+```
+
+Redirects to GitHub OAuth flow.
+
+**Response:** Redirects to GitHub authorization page.
+
+---
+
+#### GitHub OAuth Callback
+
+```http
+GET /api/auth/github/callback?code=...
+```
+
+Handles GitHub OAuth callback.
+
+**Response:** Redirects to frontend with session token.
+
+---
+
+### Pod Management
+
+#### Create Pod
+
+```http
+POST /api/pods
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "model": "anthropic/claude-3-5-haiku"
+}
+```
+
+Creates a new pod for the authenticated wallet.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `model` | string | No | LLM model to use (default: `anthropic/claude-3-5-haiku`) |
+
+**Response:**
+```json
+{
+  "id": "abc123",
+  "subdomain": "abc123.permaweb.live",
+  "model": "anthropic/claude-3-5-haiku",
+  "status": "creating",
+  "createdAt": "2026-03-11T10:30:00Z"
+}
+```
+
+**Status Codes:**
+- `201` — Pod created
+- `401` — Unauthorized
+- `409` — Pod already exists for wallet
+- `503` — Cluster at capacity
+
+---
+
+#### List Pods
+
+```http
+GET /api/pods
+Authorization: Bearer <token>
+```
+
+Lists all pods for the authenticated wallet.
+
+**Response:**
+```json
+{
+  "pods": [
+    {
+      "id": "abc123",
+      "subdomain": "abc123.permaweb.live",
+      "model": "anthropic/claude-3-5-haiku",
+      "status": "running",
+      "createdAt": "2026-03-11T10:30:00Z"
+    }
+  ]
+}
+```
+
+**Status Codes:**
+- `200` — Success
+- `401` — Unauthorized
+
+---
+
+#### Get Pod Status
+
+```http
+GET /api/pods/:id
+Authorization: Bearer <token>
+```
+
+Returns status of a specific pod.
+
+**Response:**
+```json
+{
+  "id": "abc123",
+  "subdomain": "abc123.permaweb.live",
+  "model": "anthropic/claude-3-5-haiku",
+  "status": "running",
+  "createdAt": "2026-03-11T10:30:00Z",
+  "metrics": {
+    "cpuUsage": 0.5,
+    "memoryUsage": 512,
+    "requestCount": 42
+  }
+}
+```
+
+**Status Codes:**
+- `200` — Success
+- `401` — Unauthorized
+- `404` — Pod not found
+
+---
+
+#### Delete Pod
+
+```http
+DELETE /api/pods/:id
+Authorization: Bearer <token>
+```
+
+Deletes a pod.
+
+**Response:**
+```json
+{
+  "status": "deleted",
+  "id": "abc123"
+}
+```
+
+**Status Codes:**
+- `200` — Pod deleted
+- `401` — Unauthorized
+- `404` — Pod not found
+
+---
+
+### LLM Providers
+
+#### List Providers
+
+```http
+GET /api/llm/providers
+Authorization: Bearer <token>
+```
+
+Lists available LLM providers.
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "models": [
+        { "id": "gpt-4", "name": "GPT-4" },
+        { "id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo" }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "models": [
+        { "id": "claude-3-5-haiku", "name": "Claude 3.5 Haiku" },
+        { "id": "claude-3-opus", "name": "Claude 3 Opus" }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### Usage Tracking
+
+#### Get Usage
+
+```http
+GET /api/usage
+Authorization: Bearer <token>
+```
+
+Returns usage statistics for the authenticated wallet.
+
+**Response:**
+```json
+{
+  "walletAddress": "0xABC123...",
+  "period": {
+    "start": "2026-03-01T00:00:00Z",
+    "end": "2026-03-31T23:59:59Z"
+  },
+  "usage": {
+    "totalTokens": 1500000,
+    "inputTokens": 1000000,
+    "outputTokens": 500000,
+    "requestCount": 342
+  },
+  "cost": {
+    "amount": 15.00,
+    "currency": "USD"
+  }
+}
+```
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|------------|------|-------------|
+| `start` | string | Period start (ISO 8601) |
+| `end` | string | Period end (ISO 8601) |
+
+---
+
+## Pod API (Direct)
+
+Send requests directly to your pod's subdomain.
+
+### Send Message
+
+```http
+POST https://{pod-id}.permaweb.live/verify
+Signature: keyId="{wallet-address}", ...
+Signature-Input: sig1=("@method" "@path" "host" "date")
+Content-Type: application/json
+
+{
+  "id": "req_abc123",
+  "method": "message",
+  "params": {
+    "content": "Create a hello.ts file"
+  }
+}
+```
+
+**Request Schema:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | Yes | Unique request ID |
+| `method` | string | Yes | `"message"` |
+| `params.content` | string | Yes | Message content |
+| `params.sessionId` | string | No | Session ID for context |
+| `timestamp` | number | No | Request timestamp |
+
+**Response:** JSONL stream
+
+See [JSONL Events](/jsonl-events) for event types.
+
+**Status Codes:**
+- `200` — Success (JSONL stream)
+- `401` — Invalid signature
+- `400` — Invalid request format
+
+---
+
+## Error Responses
+
+All errors follow this format:
+
+```json
+{
+  "error": {
+    "code": "AUTH_INVALID_SIGNATURE",
+    "message": "Signature verification failed",
+    "details": {
+      "reason": "Signature does not match keyId"
+    }
+  }
+}
+```
+
+### Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `AUTH_INVALID_SIGNATURE` | 401 | Signature verification failed |
+| `AUTH_EXPIRED_NONCE` | 400 | Nonce has expired |
+| `AUTH_REPLAY_DETECTED` | 400 | Request was already processed |
+| `POD_NOT_FOUND` | 404 | Pod does not exist |
+| `POD_NOT_RUNNING` | 503 | Pod is not in running state |
+| `POD_LIMIT_EXCEEDED` | 429 | Pod limit for wallet exceeded |
+| `REQUEST_INVALID_FORMAT` | 400 | Invalid JSON format |
+| `REQUEST_MISSING_FIELD` | 400 | Required field missing |
+| `REQUEST_TOO_LARGE` | 413 | Request body exceeds size limit |
+| `LLM_KEY_NOT_FOUND` | 500 | No LLM key configured |
+| `LLM_RATE_LIMITED` | 429 | LLM API rate limit exceeded |
+| `LLM_ERROR` | 500 | LLM provider returned error |
+
+## What's Next?
+
+- [JSONL Events](/jsonl-events) — Event type reference
+- [HTTPSig Signing](/http-sig) — Request signing details
+- [Frontend Guide](/frontend-quickstart) — Build your first app

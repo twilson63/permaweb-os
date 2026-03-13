@@ -95,15 +95,44 @@ curl http://{pod-id}.127.0.0.1.nip.io:3001/health
 
 ## 🔑 Authentication Flow
 
+Web OS supports both Ethereum and Arweave wallet authentication.
+
+### Supported Wallets
+
+| Wallet | Address Format | Signature |
+|--------|---------------|----------|
+| Ethereum | `0x` + 40 hex chars | ECDSA secp256k1 (personal_sign) |
+| Arweave | 43-char Base64URL | RSA-PSS-SHA256 |
+
+### Authentication Steps
+
 ```
 1. User clicks "Connect Wallet"
 2. Frontend requests nonce from /api/auth/nonce
-3. User signs nonce with wallet
-4. Frontend sends signature to /api/auth/verify
-5. Server verifies signature, creates session token
-6. Session token stored in localStorage
-7. Token sent in Authorization: Bearer header
-8. Pods bound to wallet address (ownerWallet field)
+3. Frontend detects wallet type (Ethereum or Arweave)
+4. User signs nonce with wallet (appropriate signature method)
+5. Frontend sends signature to /api/auth/verify
+6. Server verifies signature, creates session token
+7. Session token stored in localStorage
+8. Token sent in Authorization: Bearer header
+9. Pods bound to wallet address (ownerWallet field)
+```
+
+### Arweave Signature Example
+
+```javascript
+// Using ArConnect or arweave.app wallet
+const signature = await window.arweaveWallet.signMessage(challenge, {
+  name: 'RSA-PSS',
+  saltLength: 32
+});
+```
+
+### Ethereum Signature Example
+
+```javascript
+// Using ethers.js
+const signature = await signer.signMessage(challenge);
 ```
 
 ## 📁 Project Structure

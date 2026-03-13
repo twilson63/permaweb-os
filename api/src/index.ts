@@ -18,6 +18,17 @@ import { listSupportedModels, resolveModelSelection } from "./llm/modelRegistry"
 import { LlmSecretStore } from "./llm/secretStore";
 import { PodStore } from "./pods/store";
 import { UsageStore } from "./usage/store";
+import {
+  httpMetricsMiddleware,
+  authAttemptsTotal,
+  authFailuresTotal,
+  tokensUsedTotal,
+  podsTotal,
+  podsByStatus,
+  activeWebsockets,
+  getMetrics,
+  getMetricsContentType
+} from "./metrics";
 
 /**
  * API server entry point.
@@ -61,44 +72,79 @@ export const createApp = (
 
   app.use(express.json());
 
+  // HTTP metrics middleware - tracks request duration and counts
+  app.use(httpMetricsMiddleware);
+
   const requireSession = createSessionAuthMiddleware(authStore);
 
   /**
+   * Prometheus metrics endpoint.
+   * Exposes metrics for scraping by Prometheus server.
+   */
+  app.get("/metrics", async (_req, res) => {
+    try {
+      const metrics = await getMetrics();
+      res.set("Content-Type", getMetricsContentType());
+      res.send(metrics);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to collect metrics";
+      res.status(500).json({ error: message });
+    }
+  });
+
+  /**
    * Issues a wallet signature challenge to begin session authentication.
+   * Supports Ethereum (0x...) and Arweave (43-char base64url) addresses.
    */
   app.post("/api/auth/nonce", (req, res) => {
     const address = typeof req.body?.address === "string" ? req.body.address : "";
 
     if (!address) {
+      authFailuresTotal.labels("missing_address").inc();
       res.status(400).json({ error: "Wallet address is required" });
       return;
     }
 
+    authAttemptsTotal.labels("wallet").inc();
+
     try {
       const challenge = authStore.createChallenge(address);
-      res.json({ message: challenge.message, nonce: challenge.nonce });
+      res.json({
+        message: challenge.message,
+        nonce: challenge.nonce,
+        walletType: challenge.walletType
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create challenge";
+      authFailuresTotal.labels("challenge_creation_failed").inc();
       res.status(400).json({ error: message });
     }
   });
 
   /**
    * Verifies a signed wallet challenge and returns a bearer session token.
+   * Supports Ethereum (eth-personal-sign) and Arweave (RSA-PSS-SHA256) signatures.
+   *
+   * For Arweave wallets, optionally accepts a JWK public key to avoid gateway lookup.
    */
-  app.post("/api/auth/verify", (req, res) => {
+  app.post("/api/auth/verify", async (req, res) => {
     const address = typeof req.body?.address === "string" ? req.body.address : "";
     const signature = typeof req.body?.signature === "string" ? req.body.signature : "";
+    const jwk = req.body?.jwk; // Optional: for Arweave, pre-resolved public key
 
     if (!address || !signature) {
+      authFailuresTotal.labels("missing_credentials").inc();
       res.status(400).json({ error: "Address and signature are required" });
       return;
     }
 
+    authAttemptsTotal.labels("wallet").inc();
+
     try {
-      const session = authStore.verifySignature(address, signature);
+      const session = await authStore.verifySignature(address, signature, jwk ? { jwk } : undefined);
 
       if (!session) {
+        authFailuresTotal.labels("invalid_signature").inc();
         res.status(401).json({ error: "Invalid or expired signature challenge" });
         return;
       }
@@ -106,6 +152,7 @@ export const createApp = (
       res.json(session);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to verify signature";
+      authFailuresTotal.labels("verification_error").inc();
       res.status(400).json({ error: message });
     }
   });
@@ -115,9 +162,12 @@ export const createApp = (
    * the authenticated user to GitHub's authorization page.
    */
   app.get("/api/auth/github", requireSession, (req, res: Response<unknown, SessionLocals>) => {
+    authAttemptsTotal.labels("github").inc();
+
     const oauthConfig = getGitHubOAuthConfig();
 
     if (!oauthConfig) {
+      authFailuresTotal.labels("github_not_configured").inc();
       res.status(500).json({ error: "GitHub OAuth is not configured" });
       return;
     }
@@ -149,6 +199,7 @@ export const createApp = (
     const oauthConfig = getGitHubOAuthConfig();
 
     if (!oauthConfig) {
+      authFailuresTotal.labels("github_not_configured").inc();
       res.status(500).json({ error: "GitHub OAuth is not configured" });
       return;
     }
@@ -156,6 +207,7 @@ export const createApp = (
     const error = typeof req.query.error === "string" ? req.query.error : "";
 
     if (error) {
+      authFailuresTotal.labels("github_auth_denied").inc();
       const description =
         typeof req.query.error_description === "string"
           ? req.query.error_description
@@ -168,6 +220,7 @@ export const createApp = (
     const state = typeof req.query.state === "string" ? req.query.state : "";
 
     if (!code || !state) {
+      authFailuresTotal.labels("github_missing_params").inc();
       res.status(400).json({ error: "Missing GitHub OAuth code or state" });
       return;
     }
@@ -176,6 +229,7 @@ export const createApp = (
     githubOAuthStates.delete(state);
 
     if (!stateRecord || stateRecord.expiresAtMs <= Date.now()) {
+      authFailuresTotal.labels("github_expired_state").inc();
       res.status(401).json({ error: "Invalid or expired GitHub OAuth state" });
       return;
     }
@@ -192,6 +246,7 @@ export const createApp = (
       });
 
       if (!githubToken) {
+        authFailuresTotal.labels("github_token_exchange_failed").inc();
         res.status(401).json({ error: "GitHub token exchange failed" });
         return;
       }
@@ -199,12 +254,14 @@ export const createApp = (
       const stored = authStore.setGitHubToken(stateRecord.sessionToken, githubToken);
 
       if (!stored) {
+        authFailuresTotal.labels("session_expired").inc();
         res.status(401).json({ error: "Session expired" });
         return;
       }
 
       res.json({ connected: true });
     } catch (_error) {
+      authFailuresTotal.labels("github_callback_error").inc();
       res.status(500).json({ error: "Failed to complete GitHub OAuth flow" });
     }
   });
@@ -235,6 +292,9 @@ export const createApp = (
 
     try {
       const pod = store.create(getSessionAddress(res), req.body, modelSelection);
+      // Update pod metrics
+      podsTotal.inc();
+      podsByStatus.labels("running").inc();
       res.status(201).json(pod);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create pod";
@@ -272,11 +332,16 @@ export const createApp = (
     }
 
     try {
-      const usage = usageStore.create(getSessionAddress(res), {
+      const wallet = getSessionAddress(res);
+      const usage = usageStore.create(wallet, {
         model,
         promptTokens,
         completionTokens
       });
+
+      // Track token metrics
+      tokensUsedTotal.labels(wallet, model, "prompt").inc(promptTokens);
+      tokensUsedTotal.labels(wallet, model, "completion").inc(completionTokens);
 
       res.status(201).json(usage);
     } catch (error) {
@@ -341,6 +406,12 @@ export const createApp = (
     if (!deleted) {
       res.status(404).json({ error: "Pod not found" });
       return;
+    }
+
+    // Update pod metrics
+    podsTotal.dec();
+    if (pod.status) {
+      podsByStatus.labels(pod.status).dec();
     }
 
     res.status(204).send();

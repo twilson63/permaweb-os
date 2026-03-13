@@ -1,0 +1,425 @@
+# Build a Frontend
+
+Build a React or Vue app that connects to Permaweb OS.
+
+## Overview
+
+This guide walks through building a frontend that:
+
+1. Connects a wallet (MetaMask, Arweave)
+2. Creates and manages pods
+3. Sends signed requests
+4. Streams JSONL responses
+
+## React Quick Start
+
+### 1. Create Project
+
+```bash
+npx create-react-app permaweb-frontend --template typescript
+cd permaweb-frontend
+npm install http-message-sig ethers
+```
+
+### 2. Wallet Connection
+
+```tsx
+// src/hooks/useWallet.ts
+import { useState, useEffect } from 'react';
+import { ethers } from 'ethers';
+
+interface WalletState {
+  address: string | null;
+  signer: ethers.Signer | null;
+  isConnected: boolean;
+}
+
+export function useWallet() {
+  const [wallet, setWallet] = useState<WalletState>({
+    address: null,
+    signer: null,
+    isConnected: false
+  });
+
+  const connect = async () => {
+    if (!window.ethereum) {
+      throw new Error('No Ethereum wallet found');
+    }
+
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const accounts = await provider.send('eth_requestAccounts', []);
+    const signer = await provider.getSigner();
+    const address = await signer.getAddress();
+
+    setWallet({
+      address,
+      signer,
+      isConnected: true
+    });
+  };
+
+  const disconnect = () => {
+    setWallet({
+      address: null,
+      signer: null,
+      isConnected: false
+    });
+  };
+
+  return { ...wallet, connect, disconnect };
+}
+```
+
+### 3. Pod Management
+
+```tsx
+// src/hooks/usePod.ts
+import { useState, useCallback } from 'react';
+import type { ethers } from 'ethers';
+
+interface Pod {
+  id: string;
+  subdomain: string;
+  status: 'creating' | 'running' | 'stopped' | 'error';
+  createdAt: string;
+}
+
+export function usePod(signer: ethers.Signer | null, walletAddress: string | null) {
+  const [pods, setPods] = useState<Pod[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const createPod = useCallback(async (model: string = 'anthropic/claude-3-5-haiku') => {
+    if (!signer || !walletAddress) return null;
+
+    setLoading(true);
+    try {
+      // 1. Get nonce
+      const nonceRes = await fetch('https://api.permaweb.live/api/auth/nonce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: walletAddress })
+      });
+      const { nonce } = await nonceRes.json();
+
+      // 2. Sign and verify
+      const signature = await signer.signMessage(nonce);
+      const verifyRes = await fetch('https://api.permaweb.live/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          walletAddress,
+          signature,
+          nonce
+        })
+      });
+      const { sessionToken, pod } = await verifyRes.json();
+
+      // 3. Create pod
+      const createRes = await fetch('https://api.permaweb.live/api/pods', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({ model })
+      });
+      const newPod = await createRes.json();
+
+      setPods(prev => [...prev, newPod]);
+      return newPod;
+    } finally {
+      setLoading(false);
+    }
+  }, [signer, walletAddress]);
+
+  const listPods = useCallback(async () => {
+    if (!signer || !walletAddress) return;
+
+    // Similar auth flow...
+    const res = await fetch('https://api.permaweb.live/api/pods', {
+      headers: { 'Authorization': `Bearer ${sessionToken}` }
+    });
+    const podList = await res.json();
+    setPods(podList);
+  }, [signer, walletAddress]);
+
+  return { pods, loading, createPod, listPods };
+}
+```
+
+### 4. Send Signed Request
+
+```tsx
+// src/hooks/useMessage.ts
+import { useState, useCallback } from 'react';
+import { signatureHeaders } from 'http-message-sig';
+import type { ethers } from 'ethers';
+
+interface StreamEvent {
+  type: string;
+  [key: string]: any;
+}
+
+export function useMessage(signer: ethers.Signer | null) {
+  const [events, setEvents] = useState<StreamEvent[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+
+  const sendMessage = useCallback(async (
+    content: string,
+    podSubdomain: string
+  ) => {
+    if (!signer) return;
+
+    setIsStreaming(true);
+    setEvents([]);
+
+    const walletAddress = await signer.getAddress();
+    const request = {
+      id: `req_${Date.now()}`,
+      method: 'message',
+      params: { content }
+    };
+
+    // Create HTTPSig signature
+    const sigHeaders = await signatureHeaders({
+      method: 'POST',
+      url: '/verify',
+      headers: {
+        host: podSubdomain,
+        date: new Date().toUTCString()
+      }
+    }, {
+      signer: {
+        keyid: walletAddress.toLowerCase(),
+        sign: async (data: string) => {
+          const sig = await signer.signMessage(data);
+          return Buffer.from(sig.slice(2), 'hex');
+        }
+      }
+    });
+
+    const response = await fetch(`https://${podSubdomain}/verify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Signature': sigHeaders.Signature,
+        'Signature-Input': sigHeaders['Signature-Input'],
+        'Date': sigHeaders.date
+      },
+      body: JSON.stringify(request)
+    });
+
+    // Stream JSONL response
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) {
+      setIsStreaming(false);
+      return;
+    }
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      for (const line of chunk.split('\n')) {
+        if (line.trim()) {
+          try {
+            const event = JSON.parse(line);
+            setEvents(prev => [...prev, event]);
+          } catch (e) {
+            console.error('Failed to parse event:', line);
+          }
+        }
+      }
+    }
+
+    setIsStreaming(false);
+  }, [signer]);
+
+  return { events, isStreaming, sendMessage };
+}
+```
+
+### 5. Complete App
+
+```tsx
+// src/App.tsx
+import React, { useState } from 'react';
+import { useWallet } from './hooks/useWallet';
+import { usePod } from './hooks/usePod';
+import { useMessage } from './hooks/useMessage';
+
+function App() {
+  const { address, signer, isConnected, connect, disconnect } = useWallet();
+  const { pods, createPod, listPods } = usePod(signer, address);
+  const { events, isStreaming, sendMessage } = useMessage(signer);
+
+  const [input, setInput] = useState('');
+  const [selectedPod, setSelectedPod] = useState<string | null>(null);
+
+  const handleSend = () => {
+    if (!selectedPod || !input.trim()) return;
+    sendMessage(input, selectedPod);
+    setInput('');
+  };
+
+  return (
+    <div className="app">
+      <header>
+        <h1>Permaweb OS</h1>
+        {!isConnected ? (
+          <button onClick={connect}>Connect Wallet</button>
+        ) : (
+          <div>
+            <span>{address?.slice(0, 8)}...{address?.slice(-6)}</span>
+            <button onClick={disconnect}>Disconnect</button>
+          </div>
+        )}
+      </header>
+
+      <main>
+        <section>
+          <h2>Your Pods</h2>
+          <button onClick={() => createPod()}>Create Pod</button>
+          <ul>
+            {pods.map(pod => (
+              <li key={pod.id}>
+                <button onClick={() => setSelectedPod(pod.subdomain)}>
+                  {pod.subdomain} ({pod.status})
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section>
+          <h2>Chat</h2>
+          {selectedPod ? (
+            <>
+              <div className="messages">
+                {events.map((event, i) => (
+                  <div key={i} className={`event event-${event.type}`}>
+                    {event.type === 'text' && event.text}
+                    {event.type === 'tool_use' && `[${event.tool}]`}
+                    {event.type === 'tool_result' && event.result}
+                    {event.type === 'done' && '✓'}
+                    {event.type === 'error' && `Error: ${event.message}`}
+                  </div>
+                ))}
+              </div>
+              <input
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                placeholder="Type a message..."
+                disabled={isStreaming}
+              />
+              <button onClick={handleSend} disabled={isStreaming}>
+                {isStreaming ? 'Sending...' : 'Send'}
+              </button>
+            </>
+          ) : (
+            <p>Select a pod to start chatting</p>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
+
+export default App;
+```
+
+## Vue Quick Start
+
+```vue
+<!-- src/App.vue -->
+<template>
+  <div class="app">
+    <header>
+      <h1>Permaweb OS</h1>
+      <button v-if="!address" @click="connect">Connect Wallet</button>
+      <div v-else>
+        <span>{{ address }}</span>
+        <button @click="disconnect">Disconnect</button>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>Your Pods</h2>
+        <button @click="createPod()">Create Pod</button>
+        <ul>
+          <li v-for="pod in pods" :key="pod.id">
+            <button @click="selectPod(pod)">
+              {{ pod.subdomain }} ({{ pod.status }})
+            </button>
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Chat</h2>
+        <div v-if="selectedPod" class="messages">
+          <div v-for="(event, i) in events" :key="i" :class="`event-${event.type}`">
+            {{ formatEvent(event) }}
+          </div>
+        </div>
+        <p v-else>Select a pod to start chatting</p>
+        
+        <input v-model="input" placeholder="Type a message..." />
+        <button @click="sendMessage">Send</button>
+      </section>
+    </main>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed } from 'vue';
+import { ethers } from 'ethers';
+
+const address = ref<string | null>(null);
+const signer = ref<ethers.Signer | null>(null);
+const pods = ref<any[]>([]);
+const events = ref<any[]>([]);
+const input = ref('');
+const selectedPod = ref<any>(null);
+
+async function connect() {
+  const provider = new ethers.BrowserProvider(window.ethereum);
+  await provider.send('eth_requestAccounts', []);
+  signer.value = await provider.getSigner();
+  address.value = await signer.value.getAddress();
+}
+
+function disconnect() {
+  address.value = null;
+  signer.value = null;
+}
+
+async function createPod() {
+  // ... similar to React example
+}
+
+async function sendMessage() {
+  // ... similar to React example
+}
+
+function formatEvent(event: any) {
+  switch (event.type) {
+    case 'text': return event.text;
+    case 'tool_use': return `[${event.tool}]`;
+    case 'done': return '✓';
+    case 'error': return `Error: ${event.message}`;
+    default: return JSON.stringify(event);
+  }
+}
+</script>
+```
+
+## What's Next?
+
+- [Agent Integration](/agent-integration) — Use pods from agents
+- [API Reference](/api-reference) — All endpoints
+- [JSONL Events](/jsonl-events) — Event types reference
