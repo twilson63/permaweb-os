@@ -1,0 +1,503 @@
+# Permaweb OS API - Frontend Developer Guide
+
+This guide explains how to integrate Permaweb OS into your frontend application.
+
+## Quick Start
+
+### 1. Connect Wallet
+
+```javascript
+// Ethereum (MetaMask)
+const connectEthereum = async () => {
+  const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+  return accounts[0];
+};
+
+// Arweave (Wander/ArConnect)
+const connectArweave = async () => {
+  const wallet = window.wander || window.arweaveWallet;
+  await wallet.connect(['ACCESS_ADDRESS', 'ACCESS_ALL_PUBLIC_KEYS']);
+  return await wallet.getActiveAddress();
+};
+```
+
+### 2. Authenticate
+
+```javascript
+const API_URL = 'https://api.permaweb.run';
+
+// Step 1: Get nonce
+const getNonce = async (address, walletType) => {
+  const response = await fetch(`${API_URL}/api/auth/nonce`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address })
+  });
+  return response.json();
+};
+
+// Step 2: Sign message
+const signMessage = async (message, walletType) => {
+  if (walletType === 'ethereum') {
+    return await window.ethereum.request({
+      method: 'personal_sign',
+      params: [message, await window.ethereum.request({ method: 'eth_accounts' })[0]]
+    });
+  }
+  
+  if (walletType === 'arweave') {
+    const wallet = window.wander || window.arweaveWallet;
+    const encoder = new TextEncoder();
+    const messageBytes = encoder.encode(message);
+    const signatureBytes = await wallet.signMessage(messageBytes, { algorithm: 'RSA-PSS-SHA256' });
+    
+    // Convert to base64url
+    if (signatureBytes instanceof Uint8Array) {
+      return btoa(String.fromCharCode(...signatureBytes))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=/g, '');
+    }
+    return signatureBytes;
+  }
+};
+
+// Step 3: Verify and get session token
+const authenticate = async (address, walletType) => {
+  // Get nonce
+  const { message } = await getNonce(address, walletType);
+  
+  // Sign
+  const signature = await signMessage(message, walletType);
+  
+  // Verify
+  const response = await fetch(`${API_URL}/api/auth/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address, signature, walletType })
+  });
+  
+  const { token } = await response.json();
+  return token; // Session token
+};
+```
+
+### 3. Use the API
+
+```javascript
+// Store session token
+let sessionToken = null;
+
+// Make authenticated request
+const fetchWithAuth = async (url, options = {}) => {
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Authorization': `Bearer ${sessionToken}`
+    }
+  });
+};
+```
+
+## API Reference
+
+### Base URL
+
+```
+https://api.permaweb.run
+```
+
+### Authentication Endpoints
+
+#### POST /api/auth/nonce
+
+Get a challenge message for signing.
+
+**Request:**
+```json
+{
+  "address": "0x... or Arweave address",
+  "walletType": "ethereum" | "arweave"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Sign in to Web OS\n\nAddress: ...\nNonce: ...\nIssued At: ...",
+  "nonce": "...",
+  "walletType": "ethereum" | "arweave"
+}
+```
+
+#### POST /api/auth/verify
+
+Verify signature and get session token.
+
+**Request:**
+```json
+{
+  "address": "0x... or Arweave address",
+  "signature": "signature in appropriate format",
+  "walletType": "ethereum" | "arweave"
+}
+```
+
+**Response:**
+```json
+{
+  "token": "session-token",
+  "address": "...",
+  "walletType": "ethereum" | "arweave"
+}
+```
+
+### Pod Endpoints
+
+#### POST /api/pods
+
+Create a new pod.
+
+**Headers:**
+```
+Authorization: Bearer <session-token>
+```
+
+**Request:**
+```json
+{
+  "model": "openrouter/anthropic/claude-3.5-sonnet"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "pod-uuid",
+  "owner": "wallet-address",
+  "model": "...",
+  "status": "pending",
+  "createdAt": "..."
+}
+```
+
+**Supported Models:**
+- `openrouter/anthropic/claude-3.5-sonnet`
+- `openrouter/openai/gpt-4o`
+- `openai/gpt-4o-mini`
+- `anthropic/claude-3-7-sonnet`
+- `groq/llama-3.1-70b-versatile`
+
+#### GET /api/pods
+
+List your pods.
+
+**Headers:**
+```
+Authorization: Bearer <session-token>
+```
+
+**Response:**
+```json
+[
+  {
+    "id": "pod-uuid",
+    "owner": "wallet-address",
+    "model": "...",
+    "status": "running",
+    "url": "https://pod-id.pods.permaweb.run"
+  }
+]
+```
+
+#### GET /api/pods/:id
+
+Get a specific pod.
+
+#### DELETE /api/pods/:id
+
+Delete a pod.
+
+### LLM Key Endpoints
+
+#### POST /api/llm/keys
+
+Register an LLM API key.
+
+**Headers:**
+```
+Authorization: Bearer <session-token>
+```
+
+**Request:**
+```json
+{
+  "provider": "openrouter",
+  "key": "sk-or-..."
+}
+```
+
+**Supported Providers:**
+- `openai`
+- `anthropic`
+- `openrouter`
+- `groq`
+
+#### GET /api/llm/keys
+
+List your registered providers.
+
+#### DELETE /api/llm/keys/:provider
+
+Remove a provider key.
+
+### Health Endpoints
+
+#### GET /health
+
+**Response:**
+```json
+{ "status": "ok" }
+```
+
+#### GET /metrics
+
+Prometheus metrics endpoint.
+
+## Pod Access
+
+After creating a pod, access it at:
+
+```
+https://<pod-id>.pods.permaweb.run
+```
+
+### HTTPSig Authentication
+
+Pods are protected by HTTPSig. Each request must be signed:
+
+```javascript
+// Sign request with wallet
+const signRequest = async (method, path, body, walletType) => {
+  const timestamp = new Date().toISOString();
+  const content = body ? JSON.stringify(body) : '';
+  const contentDigest = content ? btoa(content) : '';
+  
+  const signatureBase = [
+    `@method: ${method}`,
+    `@path: ${path}`,
+    `host: pods.permaweb.run`,
+    `date: ${timestamp}`,
+    contentDigest ? `content-digest: ${contentDigest}` : ''
+  ].filter(Boolean).join('\n');
+  
+  const signature = await signMessage(signatureBase, walletType);
+  
+  return {
+    'Signature-Input': `sig1=("@method" "@path" "host" "date");created=${Date.now()};keyid="${address}";alg="${walletType === 'ethereum' ? 'eth-personal-sign' : 'arweave-rsa-pss-sha256'}"`,
+    'Signature': `sig1=:${signature}:`,
+    'Date': timestamp,
+    'Host': 'pods.permaweb.run'
+  };
+};
+```
+
+## Error Handling
+
+```javascript
+const handleApiError = async (response) => {
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || `HTTP ${response.status}`);
+  }
+  return response;
+};
+
+// Usage
+try {
+  const response = await fetchWithAuth(`${API_URL}/api/pods`, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'openrouter/anthropic/claude-3.5-sonnet' })
+  });
+  const pod = await handleApiError(response).then(r => r.json());
+} catch (error) {
+  console.error('API Error:', error.message);
+}
+```
+
+## Complete Example
+
+```javascript
+class PermawebOSClient {
+  constructor(apiUrl = 'https://api.permaweb.run') {
+    this.apiUrl = apiUrl;
+    this.sessionToken = null;
+    this.walletType = null;
+    this.address = null;
+  }
+
+  async connectWallet(walletType = 'ethereum') {
+    this.walletType = walletType;
+    
+    if (walletType === 'ethereum') {
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      this.address = accounts[0];
+    } else if (walletType === 'arweave') {
+      const wallet = window.wander || window.arweaveWallet;
+      await wallet.connect(['ACCESS_ADDRESS', 'ACCESS_ALL_PUBLIC_KEYS']);
+      this.address = await wallet.getActiveAddress();
+    }
+    
+    return this.address;
+  }
+
+  async authenticate() {
+    // Get nonce
+    const nonceRes = await fetch(`${this.apiUrl}/api/auth/nonce`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: this.address, walletType: this.walletType })
+    });
+    const { message } = await nonceRes.json();
+    
+    // Sign
+    const signature = await this.signMessage(message);
+    
+    // Verify
+    const verifyRes = await fetch(`${this.apiUrl}/api/auth/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        address: this.address, 
+        signature, 
+        walletType: this.walletType 
+      })
+    });
+    
+    const { token } = await verifyRes.json();
+    this.sessionToken = token;
+    return token;
+  }
+
+  async signMessage(message) {
+    if (this.walletType === 'ethereum') {
+      return await window.ethereum.request({
+        method: 'personal_sign',
+        params: [message, this.address]
+      });
+    }
+    
+    const wallet = window.wander || window.arweaveWallet;
+    const encoder = new TextEncoder();
+    const signatureBytes = await wallet.signMessage(encoder.encode(message));
+    
+    if (signatureBytes instanceof Uint8Array) {
+      return btoa(String.fromCharCode(...signatureBytes))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=/g, '');
+    }
+    return signatureBytes;
+  }
+
+  async createPod(model) {
+    const res = await fetch(`${this.apiUrl}/api/pods`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.sessionToken}`
+      },
+      body: JSON.stringify({ model })
+    });
+    
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || 'Failed to create pod');
+    }
+    
+    return res.json();
+  }
+
+  async listPods() {
+    const res = await fetch(`${this.apiUrl}/api/pods`, {
+      headers: { 'Authorization': `Bearer ${this.sessionToken}` }
+    });
+    return res.json();
+  }
+
+  async registerApiKey(provider, key) {
+    const res = await fetch(`${this.apiUrl}/api/llm/keys`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.sessionToken}`
+      },
+      body: JSON.stringify({ provider, key })
+    });
+    
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || 'Failed to register key');
+    }
+    
+    return res.json();
+  }
+
+  getPodUrl(podId) {
+    return `https://${podId}.pods.permaweb.run`;
+  }
+}
+
+// Usage
+const client = new PermawebOSClient();
+
+// Connect wallet
+const address = await client.connectWallet('ethereum');
+console.log('Connected:', address);
+
+// Authenticate
+const token = await client.authenticate();
+console.log('Session token:', token);
+
+// Register API key
+await client.registerApiKey('openrouter', 'sk-or-...');
+
+// Create pod
+const pod = await client.createPod('openrouter/anthropic/claude-3.5-sonnet');
+console.log('Pod created:', pod);
+console.log('Pod URL:', client.getPodUrl(pod.id));
+```
+
+## Supported Wallets
+
+### Ethereum
+- MetaMask
+- Coinbase Wallet
+- WalletConnect
+- Any Ethereum-compatible wallet
+
+### Arweave
+- Wander (formerly ArConnect)
+- Arweave.app
+- Any Arweave-compatible wallet
+
+## Rate Limits
+
+| Endpoint | Limit |
+|----------|-------|
+| `/api/auth/nonce` | 10/minute |
+| `/api/auth/verify` | 10/minute |
+| `/api/pods` (create) | 10/hour |
+| `/api/pods` (list) | 100/minute |
+| `/api/llm/keys` | 100/minute |
+
+## Support
+
+- **Discord:** [OpenClaw Community](https://discord.com/clawd)
+- **GitHub:** [openclaw/openclaw](https://github.com/openclaw/openclaw)
+- **Docs:** Coming soon
+
+## License
+
+MIT License - See LICENSE file for details.
