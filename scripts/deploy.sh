@@ -11,6 +11,7 @@
 #   -r, --registry       Container registry URL
 #   -t, --tag            Image tag [default: latest]
 #   -n, --namespace      Kubernetes namespace [default: web-os]
+#   -D, --domain         Domain for ingress (default: auto-detect from LB IP)
 #   -d, --dry-run        Show what would be deployed without applying
 #   -v, --verbose        Enable verbose output
 #   -h, --help           Show this help message
@@ -20,12 +21,14 @@
 #   ANTHROPIC_API_KEY    Anthropic API key (required)
 #   SESSION_SECRET       Session signing secret (auto-generated if not set)
 #   OWNER_PUBLIC_KEY     Owner wallet public key (PEM format)
+#   DOMAIN               Domain for ingress (default: auto-detect from LoadBalancer IP)
 #   DOCKER_BUILDKIT       Enable BuildKit for faster builds
 #
 # Examples:
 #   ./scripts/deploy.sh --environment prod --tag v1.2.3
 #   ./scripts/deploy.sh -e staging -d  # Dry run
-#   REGISTRY=registry.example.com ./scripts/deploy.sh
+#   DOMAIN=permaweb.live ./scripts/deploy.sh
+#   DOMAIN=164.90.123.45.nip.io ./scripts/deploy.sh  # nip.io testing
 
 set -euo pipefail
 
@@ -42,6 +45,7 @@ ENVIRONMENT="${ENVIRONMENT:-dev}"
 REGISTRY="${REGISTRY:-docker.io/library}"
 TAG="${TAG:-latest}"
 NAMESPACE="${NAMESPACE:-web-os}"
+DOMAIN="${DOMAIN:-}"  # Auto-detected from LoadBalancer if not set
 DRY_RUN="${DRY_RUN:-false}"
 VERBOSE="${VERBOSE:-false}"
 
@@ -237,12 +241,26 @@ create_secrets() {
 apply_manifests() {
   log info "Applying Kubernetes manifests..."
   
+  # Auto-detect domain from LoadBalancer IP if not set
+  if [[ -z "${DOMAIN:-}" ]]; then
+    log info "DOMAIN not set, attempting auto-detection..."
+    DOMAIN=$(detect_loadbalancer_ip)
+    if [[ -n "${DOMAIN}" ]]; then
+      DOMAIN="${DOMAIN}.nip.io"
+      log info "Auto-detected domain: ${DOMAIN}"
+    else
+      log warn "Could not auto-detect LoadBalancer IP, using default"
+      DOMAIN="web-os.local"
+    fi
+  fi
+  
+  log info "Using domain: ${DOMAIN}"
+  
   local manifests=(
     "namespace.yaml"
     "api-deployment.yaml"
     "api-service.yaml"
     "api-hpa.yaml"
-    "gateway-ingress.yaml"
     "servicemonitor.yaml"
   )
   
@@ -261,7 +279,95 @@ apply_manifests() {
     fi
   done
   
+  # Apply ingress with domain templating
+  apply_ingress
+  
   log success "Manifests applied"
+}
+
+detect_loadbalancer_ip() {
+  # Try to get LoadBalancer IP from nginx ingress
+  local ip=""
+  ip=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+  
+  if [[ -z "${ip}" ]]; then
+    # Try to get from any LoadBalancer service
+    ip=$(kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.status.loadBalancer.ingress[0].ip}{"\n"}{end}' 2>/dev/null | head -1 || true)
+  fi
+  
+  echo "${ip}"
+}
+
+apply_ingress() {
+  log info "Applying ingress with domain: ${DOMAIN}"
+  
+  # Determine API and pod subdomains
+  local api_host="api.${DOMAIN}"
+  local pod_host="*.${DOMAIN}"
+  
+  # For production domains, use separate subdomain for pods
+  if [[ "${DOMAIN}" != *".nip.io" ]] && [[ "${DOMAIN}" != *".local" ]]; then
+    pod_host="*.pods.${DOMAIN}"
+  fi
+  
+  # Generate ingress manifest
+  local ingress_manifest
+  ingress_manifest=$(cat <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-os-routing
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: web-os-routing
+    app.kubernetes.io/part-of: web-os
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${api_host}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  name: http
+    - host: "${pod_host}"
+      http:
+        paths:
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: user-pod
+                port:
+                  name: httpsig-http
+          - path: /verify
+            pathType: Prefix
+            backend:
+              service:
+                name: user-pod
+                port:
+                  name: httpsig-http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: user-pod
+                port:
+                  name: opencode-http
+EOF
+)
+  
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    echo "${ingress_manifest}"
+  else
+    echo "${ingress_manifest}" | kubectl apply -f -
+  fi
+  
+  log success "Ingress applied with domain: ${DOMAIN}"
 }
 
 update_image_references() {
@@ -337,7 +443,17 @@ show_deployment_info() {
   echo "Registry:    ${REGISTRY}"
   echo "Tag:         ${TAG}"
   echo "Namespace:   ${NAMESPACE}"
+  echo "Domain:      ${DOMAIN}"
   echo ""
+  
+  if [[ "${DOMAIN}" != "web-os.local" ]]; then
+    echo "Access URLs:"
+    echo "  API:         https://api.${DOMAIN}"
+    echo "  Health:      https://api.${DOMAIN}/health"
+    echo "  Pods:        https://<pod-id>.pods.${DOMAIN}"
+    echo ""
+  fi
+  
   echo "Pods:"
   kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/part-of=web-os
   echo ""
@@ -376,6 +492,10 @@ parse_args() {
         ;;
       -n|--namespace)
         NAMESPACE="${2}"
+        shift 2
+        ;;
+      -D|--domain)
+        DOMAIN="${2}"
         shift 2
         ;;
       -d|--dry-run)
