@@ -6,20 +6,50 @@
  * Mapping from full model IDs to provider slugs.
  */
 const MODEL_PROVIDER_MAP: Record<string, string> = {
+  // OpenAI
   "openai/gpt-4.1-mini": "openai",
   "openai/gpt-4o-mini": "openai",
+  "openai/gpt-4o": "openai",
+  "openai/gpt-4-turbo": "openai",
+  // Anthropic
   "anthropic/claude-3-5-haiku": "anthropic",
-  "anthropic/claude-3-7-sonnet": "anthropic"
+  "anthropic/claude-3-7-sonnet": "anthropic",
+  "anthropic/claude-3-opus": "anthropic",
+  // Groq
+  "groq/llama-3.1-70b-versatile": "groq",
+  "groq/llama-3.1-8b-instant": "groq",
+  "groq/mixtral-8x7b-32768": "groq",
+  // OpenRouter (OpenAI-compatible)
+  "openrouter/auto": "openrouter",
+  "openrouter/openai/gpt-4o": "openrouter",
+  "openrouter/anthropic/claude-3.5-sonnet": "openrouter",
+  "openrouter/meta-llama/llama-3.1-70b-instruct": "openrouter",
+  "openrouter/mistralai/mistral-large": "openrouter",
 };
 
 /**
  * Cost map in USD per 1K tokens, split by input/output token classes.
  */
 const MODEL_TOKEN_COST_USD: Record<string, { inputPer1K: number; outputPer1K: number }> = {
+  // OpenAI
   "openai/gpt-4.1-mini": { inputPer1K: 0.0004, outputPer1K: 0.0016 },
   "openai/gpt-4o-mini": { inputPer1K: 0.00015, outputPer1K: 0.0006 },
+  "openai/gpt-4o": { inputPer1K: 0.0025, outputPer1K: 0.01 },
+  "openai/gpt-4-turbo": { inputPer1K: 0.01, outputPer1K: 0.03 },
+  // Anthropic
   "anthropic/claude-3-5-haiku": { inputPer1K: 0.0008, outputPer1K: 0.004 },
-  "anthropic/claude-3-7-sonnet": { inputPer1K: 0.003, outputPer1K: 0.015 }
+  "anthropic/claude-3-7-sonnet": { inputPer1K: 0.003, outputPer1K: 0.015 },
+  "anthropic/claude-3-opus": { inputPer1K: 0.015, outputPer1K: 0.075 },
+  // Groq (free tier available)
+  "groq/llama-3.1-70b-versatile": { inputPer1K: 0.00059, outputPer1K: 0.00079 },
+  "groq/llama-3.1-8b-instant": { inputPer1K: 0.00002, outputPer1K: 0.00002 },
+  "groq/mixtral-8x7b-32768": { inputPer1K: 0.00027, outputPer1K: 0.00027 },
+  // OpenRouter (varies by model, using averages)
+  "openrouter/auto": { inputPer1K: 0.001, outputPer1K: 0.002 },
+  "openrouter/openai/gpt-4o": { inputPer1K: 0.0025, outputPer1K: 0.01 },
+  "openrouter/anthropic/claude-3.5-sonnet": { inputPer1K: 0.003, outputPer1K: 0.015 },
+  "openrouter/meta-llama/llama-3.1-70b-instruct": { inputPer1K: 0.00088, outputPer1K: 0.00088 },
+  "openrouter/mistralai/mistral-large": { inputPer1K: 0.002, outputPer1K: 0.006 },
 };
 
 /**

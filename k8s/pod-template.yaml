@@ -38,6 +38,33 @@ spec:
       ports:
         - containerPort: 4096
           name: opencode-http
+      env:
+        # LLM API keys read from mounted secrets
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{LLM_SECRET_NAME}}
+              key: openai
+              optional: true
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{LLM_SECRET_NAME}}
+              key: anthropic
+              optional: true
+        - name: GROQ_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{LLM_SECRET_NAME}}
+              key: groq
+              optional: true
+        - name: OPENROUTER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{LLM_SECRET_NAME}}
+              key: openrouter
+              optional: true
+        # Model selection passed at request time via --model flag
       volumeMounts:
         - name: home-opencode
           mountPath: /home/opencode

@@ -61,7 +61,7 @@ export function isValidWalletSecretName(name: string): boolean {
 /**
  * List of supported LLM providers that can have API keys stored.
  */
-export const SUPPORTED_LLM_PROVIDERS = ["openai", "anthropic", "groq"] as const;
+export const SUPPORTED_LLM_PROVIDERS = ["openai", "anthropic", "groq", "openrouter"] as const;
 export type LlmProvider = (typeof SUPPORTED_LLM_PROVIDERS)[number];
 
 /**
