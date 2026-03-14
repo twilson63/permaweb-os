@@ -153,6 +153,16 @@
       </select>
       <button id="createPodBtn" disabled style="margin-top: 1rem;">Create Pod</button>
       <div id="podStatus" class="status info" style="display:none;"></div>
+      <div id="podUrl" style="display:none; margin-top: 1rem;">
+        <p style="color: #2ecc71; margin-bottom: 0.5rem;">✓ Pod created! Click to access:</p>
+        <a id="podUrlLink" href="#" target="_blank" style="color: #4ecdc4; font-size: 1.1rem; word-break: break-all;"></a>
+      </div>
+    </div>
+
+    <h2>Your Pods</h2>
+    <div class="card">
+      <button id="refreshPodsBtn" disabled>Refresh Pod List</button>
+      <div id="podsList" style="margin-top: 1rem;"></div>
     </div>
   </div>
 
@@ -191,6 +201,10 @@
       openrouterKey: document.getElementById('openrouterKey'),
       registerKeysBtn: document.getElementById('registerKeysBtn'),
       keysStatus: document.getElementById('keysStatus'),
+      podUrl: document.getElementById('podUrl'),
+      podUrlLink: document.getElementById('podUrlLink'),
+      podsList: document.getElementById('podsList'),
+      refreshPodsBtn: document.getElementById('refreshPodsBtn'),
     };
 
     // Utility Functions
@@ -378,6 +392,9 @@
               elements.keysBtn.disabled = false;
               elements.createPodBtn.disabled = false;
               elements.registerKeysBtn.disabled = false;
+              elements.refreshPodsBtn.disabled = false;
+              // Load pod list
+              await fetchPodsList();
             } else {
               throw new Error(verifyData.error || 'Authentication failed');
             }
@@ -420,6 +437,9 @@
           elements.keysBtn.disabled = false;
           elements.createPodBtn.disabled = false;
           elements.registerKeysBtn.disabled = false;
+          elements.refreshPodsBtn.disabled = false;
+          // Load pod list
+          await fetchPodsList();
         } else {
           throw new Error(verifyData.error || 'Authentication failed');
         }
@@ -546,13 +566,66 @@
         const data = await response.json();
         
         if (data.id) {
-          showStatus(elements.podStatus, `✓ Pod created: ${data.id}`, 'success');
+          // Extract short ID (first segment of UUID or full ID if not UUID)
+          const shortId = data.id.includes('-') ? data.id.split('-')[0] : data.id;
+          const podUrl = `https://${shortId}.pods.permaweb.run/`;
+          showStatus(elements.podStatus, `✓ Pod created: ${shortId}`, 'success');
           showResponse(data);
+          
+          // Show the pod URL
+          elements.podUrl.style.display = 'block';
+          elements.podUrlLink.href = podUrl;
+          elements.podUrlLink.textContent = podUrl;
+          
+          // Refresh the pod list
+          await fetchPodsList();
         } else {
           throw new Error(data.error || 'Failed to create pod');
         }
       } catch (error) {
         showStatus(elements.podStatus, `Error: ${error.message}`, 'error');
+      }
+    };
+
+    const fetchPodsList = async () => {
+      if (!sessionToken) {
+        elements.podsList.innerHTML = '<p style="color: #aaa;">Authenticate to see your pods</p>';
+        return;
+      }
+      
+      elements.podsList.innerHTML = '<p style="color: #aaa;">Loading...</p>';
+      
+      try {
+        const response = await fetch(`${API_URL}/api/pods`, {
+          headers: { 'Authorization': `Bearer ${sessionToken}` }
+        });
+        
+        const data = await response.json();
+        
+        if (data.pods && data.pods.length > 0) {
+          elements.podsList.innerHTML = data.pods.map(pod => {
+            // Extract short ID (first segment of UUID or full ID if not UUID)
+            const shortId = pod.id.includes('-') ? pod.id.split('-')[0] : pod.id;
+            const podUrl = `https://${shortId}.pods.permaweb.run/`;
+            const createdAt = new Date(pod.createdAt).toLocaleString();
+            return `
+              <div style="background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid rgba(255,255,255,0.1);">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                  <div>
+                    <strong style="color: #4ecdc4;">${shortId}</strong>
+                    <span style="color: #888; font-size: 0.8rem; margin-left: 0.5rem;">${pod.model || 'unknown'}</span>
+                  </div>
+                  <a href="${podUrl}" target="_blank" style="background: #4ecdc4; color: #1a1a2e; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.875rem;">Open Pod →</a>
+                </div>
+                <div style="color: #666; font-size: 0.75rem; margin-top: 0.5rem;">Created: ${createdAt}</div>
+              </div>
+            `;
+          }).join('');
+        } else {
+          elements.podsList.innerHTML = '<p style="color: #888;">No pods yet. Create one above!</p>';
+        }
+      } catch (error) {
+        elements.podsList.innerHTML = `<p style="color: #e74c3c;">Error loading pods: ${error.message}</p>`;
       }
     };
 
@@ -567,6 +640,7 @@
     elements.keysBtn.addEventListener('click', fetchKeys);
     elements.createPodBtn.addEventListener('click', createPod);
     elements.registerKeysBtn.addEventListener('click', registerKeys);
+    elements.refreshPodsBtn.addEventListener('click', fetchPodsList);
   </script>
 </body>
 </html>
