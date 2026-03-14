@@ -1,10 +1,58 @@
 /**
  * Auth Proxy - Enforces wallet ownership for both web and API access
  * 
- * Browser flow: Wallet signature → Session cookie
- * API flow: HTTPSig signature verification
+ * ## Architecture
  * 
- * Both verify against the pod's owner-wallet label.
+ * This proxy sits in front of each pod and enforces that only the wallet that
+ * created the pod can access it. It handles two authentication flows:
+ * 
+ * ### Browser Flow (Session Cookie)
+ * 1. User navigates to pod URL (e.g., https://abc123.pods.permaweb.run/)
+ * 2. Auth proxy shows login page with wallet connection buttons
+ * 3. User connects wallet (Wander/ArConnect or MetaMask)
+ * 4. User signs a challenge message to prove ownership
+ * 5. Auth proxy verifies signature and creates session cookie
+ * 6. Session cookie allows access for 24 hours
+ * 
+ * ### API Flow (HTTPSig)
+ * 1. Client makes request with `Authorization: Bearer <token>` header
+ * 2. Auth proxy validates token against main API session store
+ * 3. If valid, request is proxied to backend
+ * 
+ * ## Endpoints
+ * 
+ * - `GET /` - Login page (if not authenticated) or proxy to backend
+ * - `POST /auth/nonce` - Generate challenge message for signing
+ * - `POST /auth/verify` - Verify wallet signature and create session
+ * - `POST /api/auth/nonce` - Alias for /auth/nonce (for client convenience)
+ * - `POST /api/auth/verify` - Alias for /auth/verify (for client convenience)
+ * - `GET /health` - Health check endpoint
+ * - `GET /auth/logout` - Clear session cookie
+ * 
+ * ## Environment Variables
+ * 
+ * - `AUTH_PORT` - Port to listen on (default: 3001)
+ * - `BACKEND_PORT` - Port of the backend service (default: 4096)
+ * - `OWNER_WALLET` - Wallet address that owns this pod
+ * - `OWNER_KEY_ID` - Key ID for HTTPSig verification
+ * - `OWNER_PUBLIC_KEY_PEM_FILE` - Path to owner's public key file
+ * - `SESSION_SECRET` - Secret for session token generation
+ * - `SESSION_DURATION_HOURS` - Session duration in hours (default: 24)
+ * - `DOMAIN` - Domain for session cookie (default: pods.permaweb.run)
+ * 
+ * ## Wallet Support
+ * 
+ * ### Ethereum (MetaMask)
+ * - Uses `personal_sign` for message signing
+ * - Signature verified using ethers.js `verifyMessage`
+ * 
+ * ### Arweave (Wander/ArConnect)
+ * - Uses ANS-104 transaction signing (not signMessage!)
+ * - Client creates transaction with ArweaveJS, signs with wallet
+ * - Server verifies using `Arweave.crypto.verify(owner, deepHash, signature)`
+ * 
+ * @see https://docs.wander.app/ for Wander wallet documentation
+ * @see https://docs.permaweb.app/ for Arweave documentation
  */
 
 import http from 'http';

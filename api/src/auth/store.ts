@@ -288,15 +288,78 @@ export class AuthStore {
   }
 
   /**
-   * Verifies an Arweave transaction signature.
-   * This is used when the client signs an Arweave transaction containing the auth message.
-   *
-   * @param message - The auth message that was signed.
-   * @param signature - Base64URL-encoded transaction signature.
-   * @param owner - Base64URL-encoded public key modulus (owner field of transaction).
-   * @param address - Arweave wallet address.
-   * @param txData - Additional transaction data (reward, last_tx, data_size, data_root, tags).
-   * @returns `true` if signature is valid.
+   * Verifies an Arweave transaction signature for wallet authentication.
+   * 
+   * This method implements Arweave wallet authentication using transaction signing,
+   * which is the standard approach supported by Wander/ArConnect wallets.
+   * 
+   * ## Why Transaction Signing?
+   * 
+   * The traditional `signMessage()` API in Wander/ArConnect uses an undocumented signing
+   * algorithm that doesn't match any standard RSA verification method (PSS, PKCS1, etc).
+   * 
+   * The solution is to use `arweave.createTransaction({ data: message })` + `wallet.sign(tx)`
+   * which produces a standard ANS-104 transaction signature that can be verified using
+   * `Arweave.crypto.verify(owner, deepHash, signature)`.
+   * 
+   * ## ANS-104 Transaction Signature Format
+   * 
+   * For format 2 (ANS-104), the signature is computed over:
+   * ```
+   * deepHash([
+   *   "2",              // format version
+   *   owner,            // public key modulus (decoded from base64url)
+   *   target,           // empty for data transactions
+   *   quantity,         // "0" for data transactions
+   *   reward,           // network fee (from Arweave network)
+   *   last_tx,          // network anchor (from Arweave network)
+   *   tags,             // array of [name, value] pairs
+   *   data_size,        // size of the message in bytes
+   *   data_root         // merkle root of the data (SHA-256 for small data)
+   * ])
+   * ```
+   * 
+   * ## Critical: Exact Values Required
+   * 
+   * The server MUST use the exact same values that were present when the client
+   * signed the transaction. This includes:
+   * - `reward`: Network fee fetched from Arweave gateway
+   * - `last_tx`: Network anchor fetched from Arweave gateway
+   * - `data_root`: Merkle root computed by ArweaveJS
+   * - `data_size`: Size of the message
+   * 
+   * If any of these values differ between client and server, verification will fail.
+   * 
+   * ## Client Flow
+   * 
+   * 1. Client calls `arweave.createTransaction({ data: message })` - fetches network values
+   * 2. Client calls `wallet.sign(tx)` - Wander signs the transaction
+   * 3. Client extracts `signature`, `owner`, `reward`, `last_tx`, `data_size`, `data_root`, `tags`
+   * 4. Client sends all values to server for verification
+   * 
+   * @param message - The auth message that was signed (e.g., "Sign in to Web OS\n\nAddress: ...")
+   * @param signature - Base64URL-encoded transaction signature
+   * @param owner - Base64URL-encoded public key modulus (owner field from transaction)
+   * @param address - Arweave wallet address (SHA-256 hash of owner modulus)
+   * @param txData - Additional transaction data from the signed transaction
+   * @returns `true` if signature is valid and address matches owner
+   * 
+   * @example
+   * ```typescript
+   * const isValid = await authStore.verifyArweaveTransactionSignature(
+   *   "Sign in to Web OS\n\nAddress: Z1COjLRwKht...\nNonce: abc123",
+   *   "signature-base64url-string",
+   *   "public-key-modulus-base64url",
+   *   "Z1COjLRwKht...",
+   *   {
+   *     reward: "1000746638",
+   *     lastTx: "network-anchor-hash",
+   *     dataSize: "147",
+   *     dataRoot: "merkle-root-base64url",
+   *     tags: []
+   *   }
+   * );
+   * ```
    */
   async verifyArweaveTransactionSignature(
     message: string,
