@@ -8,7 +8,7 @@
  * - DELETE /api/llm/keys/:provider - Remove a provider key
  */
 
-import { Request, Response } from "express";
+import { Request, Response, RequestHandler } from "express";
 import { SecretManager, getSecretManager } from "./secret-manager";
 import { LlmProvider, isSupportedLlmProvider, SUPPORTED_LLM_PROVIDERS } from "../pods/secret-naming";
 
@@ -17,6 +17,7 @@ import { LlmProvider, isSupportedLlmProvider, SUPPORTED_LLM_PROVIDERS } from "..
  */
 export interface LlmRoutesOptions {
   secretManager?: SecretManager;
+  requireSession?: RequestHandler;
 }
 
 /**
@@ -30,21 +31,24 @@ export function registerLlmRoutes(
   options: LlmRoutesOptions = {}
 ): void {
   const secretManager = options.secretManager || getSecretManager();
+  const requireSession = options.requireSession || ((req: Request, res: Response, next: Function) => {
+    // If no middleware provided, require Authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    // Without session middleware, we can't validate the token
+    // This is a fallback - should always use requireSession middleware
+    res.status(401).json({ error: "Session middleware required" });
+    return;
+  });
 
   /**
    * POST /api/llm/keys
    * Register or update an LLM API key for the authenticated wallet.
-   * 
-   * Request body:
-   * - provider: LLM provider name (openai, anthropic, groq)
-   * - apiKey: The API key value
-   * 
-   * Response:
-   * - 201: Key registered successfully
-   * - 400: Invalid provider or missing apiKey
-   * - 500: Failed to create/update secret
    */
-  app.post("/api/llm/keys", async (req: Request, res: Response) => {
+  app.post("/api/llm/keys", requireSession, async (req: Request, res: Response) => {
     // Get wallet address from session (requires auth middleware)
     const walletAddress = res.locals.session?.address;
     
@@ -103,11 +107,8 @@ export function registerLlmRoutes(
   /**
    * GET /api/llm/keys
    * List configured LLM providers for the authenticated wallet.
-   * 
-   * Response:
-   * - 200: Array of configured provider names
    */
-  app.get("/api/llm/keys", async (_req: Request, res: Response) => {
+  app.get("/api/llm/keys", requireSession, async (_req: Request, res: Response) => {
     const walletAddress = res.locals.session?.address;
     
     if (!walletAddress) {
@@ -130,13 +131,8 @@ export function registerLlmRoutes(
   /**
    * DELETE /api/llm/keys/:provider
    * Remove an LLM API key for the authenticated wallet.
-   * 
-   * Response:
-   * - 200: Key removed successfully
-   * - 404: Key not found
-   * - 500: Failed to remove key
    */
-  app.delete("/api/llm/keys/:provider", async (req: Request, res: Response) => {
+  app.delete("/api/llm/keys/:provider", requireSession, async (req: Request, res: Response) => {
     const walletAddress = res.locals.session?.address;
     
     if (!walletAddress) {

@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",
+    "@types/cors": "^2.8.19",
+    "cors": "^2.8.6",
     "ethers": "^5.8.0",
     "express": "^4.21.2",
     "http-message-sig": "^0.2.0",

@@ -94,10 +94,13 @@ check_prerequisites() {
   fi
   
   # Check API keys
-  if [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  if [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "${ANTHROPIC_API_KEY:-}" ]] && [[ -z "${OPENROUTER_API_KEY:-}" ]] && [[ -z "${GROQ_API_KEY:-}" ]]; then
     log error "Missing API keys"
-    log info "Set: export OPENAI_API_KEY=sk-..."
-    log info "Or: export ANTHROPIC_API_KEY=sk-ant-..."
+    log info "Set one of:"
+    log info "  export OPENAI_API_KEY=sk-..."
+    log info "  export ANTHROPIC_API_KEY=sk-ant-..."
+    log info "  export OPENROUTER_API_KEY=sk-or-..."
+    log info "  export GROQ_API_KEY=gsk_..."
     exit 1
   fi
   

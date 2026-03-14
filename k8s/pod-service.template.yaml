@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pod-{{POD_ID}}
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-user-pod
+    app.kubernetes.io/part-of: web-os
+    pod-id: "{{POD_ID}}"
+spec:
+  selector:
+    pod-id: "{{POD_ID}}"
+  ports:
+    - name: opencode-http
+      port: 4096
+      targetPort: 4096
+    - name: httpsig-http
+      port: 3001
+      targetPort: 3001

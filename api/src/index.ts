@@ -5,6 +5,7 @@
  */
 
 import express from "express";
+import cors from "cors";
 import { randomBytes } from "crypto";
 import { Response } from "express";
 import {
@@ -16,6 +17,7 @@ import { createSessionAuthMiddleware, SessionLocals } from "./auth/middleware";
 import { AuthStore } from "./auth/store";
 import { listSupportedModels, resolveModelSelection } from "./llm/modelRegistry";
 import { LlmSecretStore } from "./llm/secretStore";
+import { registerLlmRoutes } from "./llm/routes";
 import { PodStore } from "./pods/store";
 import { UsageStore } from "./usage/store";
 import {
@@ -70,12 +72,23 @@ export const createApp = (
    */
   const githubOAuthStates = new Map<string, { sessionToken: string; expiresAtMs: number }>();
 
+  // Enable CORS for all origins (allows browser-based clients)
+  app.use(cors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Wallet-Type']
+  }));
+
   app.use(express.json());
 
   // HTTP metrics middleware - tracks request duration and counts
   app.use(httpMetricsMiddleware);
 
   const requireSession = createSessionAuthMiddleware(authStore);
+
+  // Register LLM key management routes
+  registerLlmRoutes(app, { requireSession });
 
   /**
    * Prometheus metrics endpoint.

@@ -98,8 +98,7 @@ get_or_create_project() {
   
   # Check if project exists
   local project_id
-  project_id=$(doctl projects list --format ID,Name --no-header | \
-    grep -E "\s+${project_name}$" | awk '{print $1}' || true)
+  project_id=$(doctl projects list 2>/dev/null | grep "${project_name}" | awk '{print $1}' || true)
   
   if [[ -n "${project_id}" ]]; then
     log info "Found existing project: ${project_name} (${project_id})"
@@ -115,9 +114,14 @@ get_or_create_project() {
     return 0
   fi
   
-  project_id=$(doctl projects create "${project_name}" \
+  # Create project and extract ID from output
+  local output
+  output=$(doctl projects create "${project_name}" \
     --description "Permaweb OS - Web-based operating system for AI agents" \
-    --format ID --no-header)
+    2>&1)
+  
+  # Extract the UUID from the output
+  project_id=$(echo "${output}" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1 || echo "default")
   
   log success "Created project: ${project_name} (${project_id})"
   echo "${project_id}"
@@ -152,14 +156,25 @@ create_cluster() {
     auto_upgrade_flag="--auto-upgrade"
   fi
   
-  local cluster_id
-  cluster_id=$(doctl kubernetes cluster create "${cluster_name}" \
+  # Create cluster and capture output
+  local output
+  output=$(doctl kubernetes cluster create "${cluster_name}" \
     --region "${region}" \
     --size "${size}" \
     --count "${count}" \
     ${ha_flag} \
     ${auto_upgrade_flag} \
-    --format ID --no-header)
+    2>&1)
+  
+  # Extract cluster ID from output
+  local cluster_id
+  cluster_id=$(echo "${output}" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+  
+  if [[ -z "${cluster_id}" ]]; then
+    log error "Failed to create cluster"
+    log error "${output}"
+    return 1
+  fi
   
   log success "Created cluster: ${cluster_id}"
   echo "${cluster_id}"

@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Permaweb OS - Test Client</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #eee;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.25rem; margin: 1.5rem 0 1rem; color: #4ecdc4; }
+    p { color: #aaa; margin-bottom: 1rem; }
+    .card {
+      background: rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    button {
+      background: #4ecdc4;
+      color: #1a1a2e;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-right: 0.5rem;
+      margin-bottom: 0.5rem;
+      transition: all 0.2s;
+    }
+    button:hover { background: #45b7aa; transform: translateY(-1px); }
+    button:disabled { background: #666; cursor: not-allowed; transform: none; }
+    button.secondary { background: #667eea; }
+    button.secondary:hover { background: #5a6fd6; }
+    button.danger { background: #e74c3c; }
+    button.danger:hover { background: #c0392b; }
+    .status {
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      margin: 1rem 0;
+    }
+    .status.success { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
+    .status.error { background: rgba(231, 76, 60, 0.2); color: #e74c3c; }
+    .status.info { background: rgba(52, 152, 219, 0.2); color: #3498db; }
+    pre {
+      background: #0a0a0a;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.875rem;
+      margin-top: 0.5rem;
+    }
+    .wallet-info {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin: 1rem 0;
+    }
+    .wallet-info span {
+      background: rgba(255,255,255,0.1);
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 0.875rem;
+    }
+    input {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      padding: 0.75rem;
+      border-radius: 8px;
+      color: #fff;
+      width: 100%;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+    }
+    input:focus { outline: none; border-color: #4ecdc4; }
+    label { display: block; margin-bottom: 0.5rem; color: #aaa; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>👾 Permaweb OS</h1>
+    <p>Test client for Web-OS authentication and API</p>
+
+    <h2>Wallet Connection</h2>
+    <div class="card">
+      <div class="wallet-info">
+        <div>
+          <button id="connectArweave">Connect Wander</button>
+          <button id="connectEthereum" class="secondary">Connect Ethereum</button>
+        </div>
+      </div>
+      <div id="walletStatus" class="status info" style="display:none;"></div>
+      <div id="walletAddress" style="display:none;">
+        <span>Address: <strong id="address"></strong></span>
+        <span>Type: <strong id="walletType"></strong></span>
+      </div>
+    </div>
+
+    <h2>Authentication</h2>
+    <div class="card">
+      <button id="authBtn" disabled>Authenticate</button>
+      <button id="logoutBtn" class="danger" style="display:none;">Logout</button>
+      <div id="authStatus" class="status info" style="display:none;"></div>
+    </div>
+
+    <h2>API Endpoints</h2>
+    <div class="card">
+      <div class="grid">
+        <button id="healthBtn">GET /health</button>
+        <button id="metricsBtn">GET /metrics</button>
+        <button id="podsBtn" disabled>GET /api/pods</button>
+        <button id="keysBtn" disabled>GET /api/llm/keys</button>
+      </div>
+      <div id="apiResponse" style="display:none;">
+        <h3 style="margin-top: 1rem;">Response</h3>
+        <pre id="responseBody"></pre>
+      </div>
+    </div>
+
+    <h2>LLM API Keys</h2>
+    <div class="card">
+      <p style="margin-bottom: 1rem; color: #2ecc71;">✓ Admin keys configured. You can create pods without registering your own keys.</p>
+      <p style="margin-bottom: 1rem; color: #aaa;">Optional: Register your own keys to use with your pods. Only enter keys you want to use.</p>
+      <div class="grid">
+        <input type="text" id="openaiKey" placeholder="OpenAI API Key (optional)" />
+        <input type="text" id="anthropicKey" placeholder="Anthropic API Key (optional)" />
+        <input type="text" id="openrouterKey" placeholder="OpenRouter API Key (optional)" />
+      </div>
+      <button id="registerKeysBtn" disabled>Register Keys (Optional)</button>
+      <div id="keysStatus" class="status info" style="display:none;"></div>
+    </div>
+
+    <h2>Create Pod</h2>
+    <div class="card">
+      <label for="modelName">Model</label>
+      <select id="modelName" style="width:100%;padding:0.75rem;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:8px;color:#fff;">
+        <option value="openrouter/anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet (OpenRouter)</option>
+        <option value="openrouter/openai/gpt-4o">GPT-4o (OpenRouter)</option>
+        <option value="openai/gpt-4o-mini">GPT-4o-mini (OpenAI)</option>
+        <option value="anthropic/claude-3-7-sonnet">Claude 3.7 Sonnet (Anthropic)</option>
+      </select>
+      <button id="createPodBtn" disabled style="margin-top: 1rem;">Create Pod</button>
+      <div id="podStatus" class="status info" style="display:none;"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    // Configuration
+    const API_URL = 'https://api.permaweb.run';
+    
+    // State
+    let walletAddress = null;
+    let walletType = null;
+    let sessionToken = null;
+
+    // DOM Elements
+    const elements = {
+      connectArweave: document.getElementById('connectArweave'),
+      connectEthereum: document.getElementById('connectEthereum'),
+      walletStatus: document.getElementById('walletStatus'),
+      walletAddress: document.getElementById('walletAddress'),
+      address: document.getElementById('address'),
+      walletType: document.getElementById('walletType'),
+      authBtn: document.getElementById('authBtn'),
+      logoutBtn: document.getElementById('logoutBtn'),
+      authStatus: document.getElementById('authStatus'),
+      healthBtn: document.getElementById('healthBtn'),
+      metricsBtn: document.getElementById('metricsBtn'),
+      podsBtn: document.getElementById('podsBtn'),
+      keysBtn: document.getElementById('keysBtn'),
+      apiResponse: document.getElementById('apiResponse'),
+      responseBody: document.getElementById('responseBody'),
+      createPodBtn: document.getElementById('createPodBtn'),
+      modelName: document.getElementById('modelName'),
+      podStatus: document.getElementById('podStatus'),
+      openaiKey: document.getElementById('openaiKey'),
+      anthropicKey: document.getElementById('anthropicKey'),
+      openrouterKey: document.getElementById('openrouterKey'),
+      registerKeysBtn: document.getElementById('registerKeysBtn'),
+      keysStatus: document.getElementById('keysStatus'),
+    };
+
+    // Utility Functions
+    const showStatus = (element, message, type = 'info') => {
+      element.textContent = message;
+      element.className = `status ${type}`;
+      element.style.display = 'block';
+    };
+
+    const showResponse = (data) => {
+      elements.apiResponse.style.display = 'block';
+      elements.responseBody.textContent = JSON.stringify(data, null, 2);
+    };
+
+    const showWallet = () => {
+      elements.walletAddress.style.display = 'flex';
+      elements.address.textContent = walletAddress.slice(0, 8) + '...' + walletAddress.slice(-8);
+      elements.walletType.textContent = walletType;
+      elements.authBtn.disabled = false;
+    };
+
+    // Arweave Wallet Connection
+    const connectArweave = async () => {
+      try {
+        // Check for Wander (new name) or ArConnect (old name)
+        const wallet = window.wander || window.arweaveWallet;
+        
+        if (!wallet) {
+          showStatus(elements.walletStatus, 'Arweave wallet not found. Install Wander from wander.app or ArConnect', 'error');
+          return;
+        }
+        
+        // Request permissions - both use the same API
+        if (wallet.connect) {
+          try {
+            await wallet.connect(['ACCESS_ADDRESS', 'ACCESS_ALL_PUBLIC_KEYS']);
+          } catch (permError) {
+            console.log('Trying alternative permissions...', permError);
+            await wallet.connect(['ACCESS_ADDRESS']);
+          }
+        }
+        
+        walletAddress = await wallet.getActiveAddress();
+        walletType = 'arweave';
+        
+        const walletName = window.wander ? 'Wander' : 'ArConnect';
+        showStatus(elements.walletStatus, `✓ ${walletName} wallet connected`, 'success');
+        showWallet();
+      } catch (error) {
+        console.error('Arweave connection error:', error);
+        showStatus(elements.walletStatus, `Error: ${error.message}`, 'error');
+      }
+    };
+
+    // Ethereum Wallet Connection
+    const connectEthereum = async () => {
+      try {
+        if (!window.ethereum) {
+          showStatus(elements.walletStatus, 'MetaMask not found. Please install it.', 'error');
+          return;
+        }
+        
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        walletAddress = accounts[0];
+        walletType = 'ethereum';
+        
+        showStatus(elements.walletStatus, '✓ Ethereum wallet connected', 'success');
+        showWallet();
+      } catch (error) {
+        showStatus(elements.walletStatus, `Error: ${error.message}`, 'error');
+      }
+    };
+
+    // Authentication
+    const authenticate = async () => {
+      try {
+        showStatus(elements.authStatus, 'Getting nonce...', 'info');
+        
+        // Get nonce (POST request)
+        const nonceUrl = `${API_URL}/api/auth/nonce`;
+        console.log('Fetching nonce from:', nonceUrl);
+        
+        const nonceResponse = await fetch(nonceUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: walletAddress })
+        });
+        
+        if (!nonceResponse.ok) {
+          const errorData = await nonceResponse.json().catch(() => ({}));
+          throw new Error(errorData.error || `HTTP ${nonceResponse.status}`);
+        }
+        
+        const nonceData = await nonceResponse.json();
+        console.log('Nonce response:', nonceData);
+        
+        if (!nonceData.message) {
+          throw new Error('Failed to get nonce: ' + JSON.stringify(nonceData));
+        }
+        
+        showStatus(elements.authStatus, 'Signing message...', 'info');
+        
+        // Sign message based on wallet type
+        let signature;
+        const messageToSign = nonceData.message;
+        
+        if (walletType === 'arweave') {
+          const wallet = window.wander || window.arweaveWallet;
+          
+          // Arweave wallets expect ArrayBuffer/Uint8Array
+          const encoder = new TextEncoder();
+          const messageBytes = encoder.encode(messageToSign);
+          
+          try {
+            // Wander/ArConnect signature
+            const signatureBytes = await wallet.signMessage(messageBytes, { algorithm: 'RSA-PSS-SHA256' });
+            
+            // Convert signature to base64url
+            if (signatureBytes instanceof Uint8Array) {
+              signature = btoa(String.fromCharCode(...signatureBytes))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=/g, '');
+            } else if (signatureBytes instanceof ArrayBuffer) {
+              const bytes = new Uint8Array(signatureBytes);
+              signature = btoa(String.fromCharCode(...bytes))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=/g, '');
+            } else {
+              // Already in correct format
+              signature = signatureBytes;
+            }
+          } catch (signError) {
+            console.error('Arweave signature error:', signError);
+            throw new Error('Failed to sign with Arweave wallet: ' + signError.message);
+          }
+        } else {
+          // Ethereum (MetaMask)
+          signature = await window.ethereum.request({
+            method: 'personal_sign',
+            params: [messageToSign, walletAddress]
+          });
+        }
+        
+        console.log('Signature:', signature);
+        showStatus(elements.authStatus, 'Verifying signature...', 'info');
+        
+        // Verify signature
+        const verifyResponse = await fetch(`${API_URL}/api/auth/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            address: walletAddress,
+            signature: signature,
+            walletType: walletType
+          })
+        });
+        
+        const verifyData = await verifyResponse.json();
+        console.log('Verify response:', verifyData);
+        
+        if (verifyData.token) {
+          sessionToken = verifyData.token;
+          showStatus(elements.authStatus, '✓ Authenticated successfully!', 'success');
+          elements.logoutBtn.style.display = 'inline-block';
+          elements.podsBtn.disabled = false;
+          elements.keysBtn.disabled = false;
+          elements.createPodBtn.disabled = false;
+          elements.registerKeysBtn.disabled = false;
+        } else {
+          throw new Error(verifyData.error || 'Authentication failed');
+        }
+      } catch (error) {
+        console.error('Auth error:', error);
+        showStatus(elements.authStatus, `Error: ${error.message}`, 'error');
+      }
+    };
+
+    const logout = () => {
+      sessionToken = null;
+      elements.logoutBtn.style.display = 'none';
+      elements.podsBtn.disabled = true;
+      elements.keysBtn.disabled = true;
+      elements.createPodBtn.disabled = true;
+      elements.registerKeysBtn.disabled = true;
+      showStatus(elements.authStatus, 'Logged out', 'info');
+    };
+
+    // LLM Key Registration
+    const registerKeys = async () => {
+      if (!sessionToken) {
+        showStatus(elements.keysStatus, 'Please authenticate first', 'error');
+        return;
+      }
+      
+      const keys = {};
+      if (elements.openaiKey.value) keys.openai = elements.openaiKey.value;
+      if (elements.anthropicKey.value) keys.anthropic = elements.anthropicKey.value;
+      if (elements.openrouterKey.value) keys.openrouter = elements.openrouterKey.value;
+      
+      if (Object.keys(keys).length === 0) {
+        showStatus(elements.keysStatus, 'Please enter at least one API key', 'error');
+        return;
+      }
+      
+      showStatus(elements.keysStatus, 'Registering keys...', 'info');
+      
+      try {
+        // Register each key
+        for (const [provider, key] of Object.entries(keys)) {
+          const response = await fetch(`${API_URL}/api/llm/keys`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${sessionToken}`
+            },
+            body: JSON.stringify({ provider, key })
+          });
+          
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || `Failed to register ${provider} key`);
+          }
+        }
+        
+        showStatus(elements.keysStatus, `✓ Registered ${Object.keys(keys).length} key(s)`, 'success');
+        elements.openaiKey.value = '';
+        elements.anthropicKey.value = '';
+        elements.openrouterKey.value = '';
+      } catch (error) {
+        console.error('Key registration error:', error);
+        showStatus(elements.keysStatus, `Error: ${error.message}`, 'error');
+      }
+    };
+
+    // API Endpoints
+    const fetchHealth = async () => {
+      const response = await fetch(`${API_URL}/health`);
+      const data = await response.json();
+      showResponse(data);
+    };
+
+    const fetchMetrics = async () => {
+      const response = await fetch(`${API_URL}/metrics`);
+      const text = await response.text();
+      elements.responseBody.textContent = text;
+      elements.apiResponse.style.display = 'block';
+    };
+
+    const fetchPods = async () => {
+      if (!sessionToken) {
+        showStatus(elements.authStatus, 'Please authenticate first', 'error');
+        return;
+      }
+      const response = await fetch(`${API_URL}/api/pods`, {
+        headers: { 'Authorization': `Bearer ${sessionToken}` }
+      });
+      const data = await response.json();
+      showResponse(data);
+    };
+
+    const fetchKeys = async () => {
+      if (!sessionToken) {
+        showStatus(elements.authStatus, 'Please authenticate first', 'error');
+        return;
+      }
+      const response = await fetch(`${API_URL}/api/llm/keys`, {
+        headers: { 'Authorization': `Bearer ${sessionToken}` }
+      });
+      const data = await response.json();
+      showResponse(data);
+    };
+
+    const createPod = async () => {
+      if (!sessionToken) {
+        showStatus(elements.podStatus, 'Please authenticate first', 'error');
+        return;
+      }
+      
+      const model = elements.modelName.value;
+      showStatus(elements.podStatus, 'Creating pod...', 'info');
+      
+      try {
+        const response = await fetch(`${API_URL}/api/pods`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${sessionToken}`
+          },
+          body: JSON.stringify({ model })
+        });
+        
+        const data = await response.json();
+        
+        if (data.id) {
+          showStatus(elements.podStatus, `✓ Pod created: ${data.id}`, 'success');
+          showResponse(data);
+        } else {
+          throw new Error(data.error || 'Failed to create pod');
+        }
+      } catch (error) {
+        showStatus(elements.podStatus, `Error: ${error.message}`, 'error');
+      }
+    };
+
+    // Event Listeners
+    elements.connectArweave.addEventListener('click', connectArweave);
+    elements.connectEthereum.addEventListener('click', connectEthereum);
+    elements.authBtn.addEventListener('click', authenticate);
+    elements.logoutBtn.addEventListener('click', logout);
+    elements.healthBtn.addEventListener('click', fetchHealth);
+    elements.metricsBtn.addEventListener('click', fetchMetrics);
+    elements.podsBtn.addEventListener('click', fetchPods);
+    elements.keysBtn.addEventListener('click', fetchKeys);
+    elements.createPodBtn.addEventListener('click', createPod);
+    elements.registerKeysBtn.addEventListener('click', registerKeys);
+  </script>
+</body>
+</html>

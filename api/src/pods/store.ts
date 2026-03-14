@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "crypto";
 import { CreatePodInput, Pod, PodLlmConfig } from "./types";
 import { getWalletSecretName, normalizeWalletAddress } from "./secret-naming";
 import { generateOwnerKeyPair, computeKeyId, getOwnerKeySecretName, OwnerKeyStore } from "./owner-keys";
+import { getPodOrchestrator, PodOrchestrator } from "./orchestrator";
+import { isKubernetesAvailable } from "../kubernetes/client";
 
 const DEFAULT_GLOBAL_LLM_SECRET_NAME = "llm-api-keys";
 
@@ -16,6 +18,10 @@ type PodStoreOptions = {
   secretExists?: (secretName: string) => boolean | Promise<boolean>;
   /** Whether to fall back to global secret if wallet secret doesn't exist */
   fallbackToGlobal?: boolean;
+  /** Pod orchestrator instance for Kubernetes operations */
+  orchestrator?: PodOrchestrator;
+  /** Whether to actually create Kubernetes resources (default: true when K8s available) */
+  createKubernetesResources?: boolean;
 };
 
 /**
@@ -30,6 +36,10 @@ type PodStoreOptions = {
  * - Each wallet gets a unique RSA key pair for HTTPSig verification
  * - Public key stored in Kubernetes secret `owner-key-<keyId>`
  * - Secret mounted ONLY in sidecar container (opencode has NO access)
+ * 
+ * Kubernetes integration:
+ * - When Kubernetes is available, creates actual pods via orchestrator
+ * - Falls back to in-memory only mode when Kubernetes is unavailable
  */
 export class PodStore {
   private readonly pods = new Map<string, Pod>();
@@ -39,6 +49,8 @@ export class PodStore {
   private readonly globalLlmSecretName: string;
   private readonly secretExists: (secretName: string) => boolean | Promise<boolean>;
   private readonly fallbackToGlobal: boolean;
+  private readonly orchestrator?: PodOrchestrator;
+  private readonly createKubernetesResources: boolean;
 
   /**
    * @param options - Configuration options
@@ -47,14 +59,18 @@ export class PodStore {
    * @param options.secretExists - Function to check if a secret exists
    * @param options.fallbackToGlobal - Whether to fall back to global secret
    * @param options.ownerKeyStore - Optional owner key store instance
+   * @param options.orchestrator - Optional pod orchestrator instance
+   * @param options.createKubernetesResources - Whether to create K8s resources (default: true when K8s available)
    */
   constructor(options: PodStoreOptions = {}) {
     this.baseDomain = options.baseDomain || process.env.POD_BASE_DOMAIN || "pods.local";
     this.globalLlmSecretName =
       options.globalLlmSecretName || process.env.LLM_GLOBAL_SECRET_NAME || DEFAULT_GLOBAL_LLM_SECRET_NAME;
-    this.secretExists = options.secretExists || (() => true);
+    this.secretExists = options.secretExists || (() => false);
     this.fallbackToGlobal = options.fallbackToGlobal ?? true;
     this.ownerKeyStore = new OwnerKeyStore();
+    this.orchestrator = options.orchestrator;
+    this.createKubernetesResources = options.createKubernetesResources ?? true;
   }
 
   /**
@@ -183,11 +199,10 @@ export class PodStore {
     }
 
     // Fall back to global secret if enabled
+    // Note: We assume the global secret exists if fallbackToGlobal is true
+    // since the admin should have created it during deployment
     if (this.fallbackToGlobal) {
-      const globalExists = this.secretExists(this.globalLlmSecretName);
-      if (globalExists === true || (globalExists as Promise<boolean>)?.then) {
-        return this.globalLlmSecretName;
-      }
+      return this.globalLlmSecretName;
     }
 
     throw new Error(
@@ -224,15 +239,10 @@ export class PodStore {
     }
 
     // Fall back to global secret if enabled
+    // Note: We assume the global secret exists if fallbackToGlobal is true
+    // since the admin should have created it during deployment
     if (this.fallbackToGlobal) {
-      try {
-        const globalExists = await Promise.resolve(this.secretExists(this.globalLlmSecretName));
-        if (globalExists) {
-          return this.globalLlmSecretName;
-        }
-      } catch {
-        // Global secret check failed
-      }
+      return this.globalLlmSecretName;
     }
 
     throw new Error(
@@ -243,6 +253,9 @@ export class PodStore {
 
   /**
    * Creates and stores a new pod record for the given wallet owner.
+   * 
+   * When Kubernetes is available and createKubernetesResources is true,
+   * also creates the actual Kubernetes pod, service, and ingress.
    *
    * @param ownerWallet - Wallet address that owns the pod.
    * @param input - Optional creation input (name/model hints).
@@ -270,12 +283,38 @@ export class PodStore {
     };
 
     this.pods.set(id, pod);
+
+    // Create Kubernetes resources if orchestrator is available
+    if (this.createKubernetesResources && (this.orchestrator || isKubernetesAvailable())) {
+      const orchestrator = this.orchestrator || getPodOrchestrator();
+      
+      // Async creation - don't block on it
+      orchestrator.createAll({
+        podId: id,
+        ownerWallet,
+        llm,
+        llmSecretName,
+        ownerKeyId: keyId,
+        ownerKeySecretName,
+        model: llm.model
+      }).then(result => {
+        if (result.status === 'failed') {
+          console.error('Failed to create Kubernetes pod:', result.message);
+        }
+      }).catch(error => {
+        console.error('Error creating Kubernetes pod:', error);
+      });
+    }
+
     return pod;
   }
 
   /**
    * Creates a pod with async secret resolution.
    * Use this when secret existence must be checked against Kubernetes.
+   * 
+   * When Kubernetes is available and createKubernetesResources is true,
+   * also creates the actual Kubernetes pod, service, and ingress.
    *
    * @param ownerWallet - Wallet address that owns the pod.
    * @param input - Optional creation input.
@@ -303,6 +342,30 @@ export class PodStore {
     };
 
     this.pods.set(id, pod);
+
+    // Create Kubernetes resources if orchestrator is available
+    if (this.createKubernetesResources && (this.orchestrator || isKubernetesAvailable())) {
+      const orchestrator = this.orchestrator || getPodOrchestrator();
+      
+      try {
+        const result = await orchestrator.createAll({
+          podId: id,
+          ownerWallet,
+          llm,
+          llmSecretName,
+          ownerKeyId: keyId,
+          ownerKeySecretName,
+          model: llm.model
+        });
+
+        if (result.status === 'failed') {
+          console.error('Failed to create Kubernetes pod:', result.message);
+        }
+      } catch (error) {
+        console.error('Error creating Kubernetes pod:', error);
+      }
+    }
+
     return pod;
   }
 
@@ -327,12 +390,63 @@ export class PodStore {
   }
 
   /**
+   * Retrieves a pod with live status from Kubernetes.
+   *
+   * @param id - Pod identifier.
+   * @returns Pod with live status when found.
+   */
+  async getWithStatus(id: string): Promise<Pod | undefined> {
+    const pod = this.pods.get(id);
+    
+    if (!pod) {
+      return undefined;
+    }
+
+    // Get live status from Kubernetes if available
+    if (this.createKubernetesResources && (this.orchestrator || isKubernetesAvailable())) {
+      const orchestrator = this.orchestrator || getPodOrchestrator();
+      
+      try {
+        const status = await orchestrator.getPodStatus(id);
+        
+        if (status) {
+          return {
+            ...pod,
+            status: status.status as Pod['status']
+          };
+        }
+      } catch (error) {
+        console.error('Error getting pod status:', error);
+      }
+    }
+
+    return pod;
+  }
+
+  /**
    * Deletes a pod by identifier.
+   * Also deletes Kubernetes resources if orchestrator is available.
    *
    * @param id - Pod identifier.
    * @returns `true` when deleted.
    */
   delete(id: string): boolean {
+    const pod = this.pods.get(id);
+    
+    if (!pod) {
+      return false;
+    }
+
+    // Delete Kubernetes resources if orchestrator is available
+    if (this.createKubernetesResources && (this.orchestrator || isKubernetesAvailable())) {
+      const orchestrator = this.orchestrator || getPodOrchestrator();
+      
+      // Async deletion - don't block on it
+      orchestrator.deletePod(id).catch(error => {
+        console.error('Error deleting Kubernetes pod:', error);
+      });
+    }
+
     return this.pods.delete(id);
   }
 

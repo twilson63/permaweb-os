@@ -6,6 +6,8 @@ metadata:
   labels:
     app.kubernetes.io/name: web-os-user-pod
     app.kubernetes.io/part-of: web-os
+    pod-id: "{{POD_ID}}"
+    owner-wallet: "{{OWNER_WALLET}}"
   annotations:
     # Prometheus scrape annotations for sidecar metrics
     prometheus.io/scrape: "true"

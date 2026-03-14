@@ -17,8 +17,10 @@
 #   -h, --help           Show this help message
 #
 # Environment Variables:
-#   OPENAI_API_KEY       OpenAI API key (required)
-#   ANTHROPIC_API_KEY    Anthropic API key (required)
+#   OPENAI_API_KEY       OpenAI API key
+#   ANTHROPIC_API_KEY    Anthropic API key
+#   OPENROUTER_API_KEY   OpenRouter API key
+#   GROQ_API_KEY         Groq API key
 #   SESSION_SECRET       Session signing secret (auto-generated if not set)
 #   OWNER_PUBLIC_KEY     Owner wallet public key (PEM format)
 #   DOMAIN               Domain for ingress (default: auto-detect from LoadBalancer IP)
@@ -103,9 +105,13 @@ check_prerequisites() {
   fi
   
   # Check for required secrets
-  if [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  if [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "${ANTHROPIC_API_KEY:-}" ]] && [[ -z "${OPENROUTER_API_KEY:-}" ]] && [[ -z "${GROQ_API_KEY:-}" ]]; then
     log error "At least one LLM API key is required"
-    log info "Set OPENAI_API_KEY and/or ANTHROPIC_API_KEY"
+    log info "Set one of:"
+    log info "  OPENAI_API_KEY=sk-..."
+    log info "  ANTHROPIC_API_KEY=sk-ant-..."
+    log info "  OPENROUTER_API_KEY=sk-or-..."
+    log info "  GROQ_API_KEY=gsk_..."
     exit 1
   fi
   
@@ -120,35 +126,65 @@ build_images() {
   log info "Building container images..."
   
   local build_args=()
-  [[ "${VERBOSE}" == "true" ]] && build_args+=(--progress=plain)
+  if [[ "${VERBOSE}" == "true" ]]; then
+    build_args+=(--progress=plain)
+  fi
   
   # API
   log info "Building web-os-api..."
-  docker build "${build_args[@]}" \
-    -t "${REGISTRY}/web-os-api:${TAG}" \
-    -t "${REGISTRY}/web-os-api:latest" \
-    "${ROOT_DIR}/api"
+  if [[ ${#build_args[@]} -gt 0 ]]; then
+    docker build "${build_args[@]}" \
+      -t "${REGISTRY}/web-os-api:${TAG}" \
+      -t "${REGISTRY}/web-os-api:latest" \
+      "${ROOT_DIR}/api"
+  else
+    docker build \
+      -t "${REGISTRY}/web-os-api:${TAG}" \
+      -t "${REGISTRY}/web-os-api:latest" \
+      "${ROOT_DIR}/api"
+  fi
   
   # Frontend
   log info "Building web-os-frontend..."
-  docker build "${build_args[@]}" \
-    -t "${REGISTRY}/web-os-frontend:${TAG}" \
-    -t "${REGISTRY}/web-os-frontend:latest" \
-    "${ROOT_DIR}/frontend"
+  if [[ ${#build_args[@]} -gt 0 ]]; then
+    docker build "${build_args[@]}" \
+      -t "${REGISTRY}/web-os-frontend:${TAG}" \
+      -t "${REGISTRY}/web-os-frontend:latest" \
+      "${ROOT_DIR}/frontend"
+  else
+    docker build \
+      -t "${REGISTRY}/web-os-frontend:${TAG}" \
+      -t "${REGISTRY}/web-os-frontend:latest" \
+      "${ROOT_DIR}/frontend"
+  fi
   
   # HTTPSig Sidecar
   log info "Building web-os-sidecar..."
-  docker build "${build_args[@]}" \
-    -t "${REGISTRY}/web-os-sidecar:${TAG}" \
-    -t "${REGISTRY}/web-os-sidecar:latest" \
-    "${ROOT_DIR}/opencode-sidecar"
+  if [[ ${#build_args[@]} -gt 0 ]]; then
+    docker build "${build_args[@]}" \
+      -t "${REGISTRY}/web-os-sidecar:${TAG}" \
+      -t "${REGISTRY}/web-os-sidecar:latest" \
+      "${ROOT_DIR}/opencode-sidecar"
+  else
+    docker build \
+      -t "${REGISTRY}/web-os-sidecar:${TAG}" \
+      -t "${REGISTRY}/web-os-sidecar:latest" \
+      "${ROOT_DIR}/opencode-sidecar"
+  fi
   
   # OpenCode Base
   log info "Building web-os-opencode..."
-  docker build "${build_args[@]}" \
-    -t "${REGISTRY}/web-os-opencode:${TAG}" \
-    -t "${REGISTRY}/web-os-opencode:latest" \
-    "${ROOT_DIR}/images/opencode-base"
+  if [[ ${#build_args[@]} -gt 0 ]]; then
+    docker build "${build_args[@]}" \
+      -t "${REGISTRY}/web-os-opencode:${TAG}" \
+      -t "${REGISTRY}/web-os-opencode:latest" \
+      "${ROOT_DIR}/images/opencode-base"
+  else
+    docker build \
+      -t "${REGISTRY}/web-os-opencode:${TAG}" \
+      -t "${REGISTRY}/web-os-opencode:latest" \
+      "${ROOT_DIR}/images/opencode-base"
+  fi
   
   log success "All images built"
 }
@@ -210,6 +246,8 @@ create_secrets() {
   local secret_args=()
   [[ -n "${OPENAI_API_KEY:-}" ]] && secret_args+=(--from-literal=openai="${OPENAI_API_KEY}")
   [[ -n "${ANTHROPIC_API_KEY:-}" ]] && secret_args+=(--from-literal=anthropic="${ANTHROPIC_API_KEY}")
+  [[ -n "${OPENROUTER_API_KEY:-}" ]] && secret_args+=(--from-literal=openrouter="${OPENROUTER_API_KEY}")
+  [[ -n "${GROQ_API_KEY:-}" ]] && secret_args+=(--from-literal=groq="${GROQ_API_KEY}")
   
   if [[ ${#secret_args[@]} -gt 0 ]]; then
     kubectl create secret generic llm-api-keys \
