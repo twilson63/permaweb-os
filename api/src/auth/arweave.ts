@@ -5,6 +5,10 @@
  */
 
 import { constants, createPublicKey, verify as cryptoVerify } from "node:crypto";
+import Arweave from "arweave";
+
+// Arweave instance for verification
+const arweave = Arweave.init({});
 
 /**
  * Supported wallet types for authentication.
@@ -24,6 +28,49 @@ export interface ArweaveJWK {
   dp?: string;
   dq?: string;
   qi?: string;
+}
+
+/**
+ * Verifies an Arweave signature using the Arweave SDK.
+ * This is the recommended way to verify Arweave signatures.
+ *
+ * @param message - Original message that was signed.
+ * @param signature - Base64URL-encoded signature.
+ * @param jwk - The JWK public key from the wallet.
+ * @returns `true` if signature is valid.
+ */
+export async function verifyArweaveSignatureWithSdk(
+  message: string,
+  signature: string,
+  jwk: ArweaveJWK
+): Promise<boolean> {
+  try {
+    console.log('[Arweave] Using Arweave SDK for verification');
+    
+    // Convert message to Uint8Array
+    const messageBytes = new TextEncoder().encode(message);
+    
+    // Convert base64url signature to Uint8Array
+    const signatureBytes = Arweave.utils.b64UrlToBuffer(signature);
+    
+    console.log('[Arweave] SDK message bytes:', messageBytes.byteLength);
+    console.log('[Arweave] SDK signature bytes:', signatureBytes.byteLength);
+    
+    // Use Arweave SDK to verify
+    // Arweave.crypto.verify takes (publicModulus, data, signature)
+    // publicModulus is just the 'n' value from JWK
+    const isValid = await Arweave.crypto.verify(
+      jwk.n,
+      messageBytes,
+      signatureBytes
+    );
+    
+    console.log('[Arweave] SDK verification result:', isValid);
+    return isValid;
+  } catch (error) {
+    console.error('[Arweave] SDK verification error:', error);
+    return false;
+  }
 }
 
 /**
@@ -181,10 +228,22 @@ export function verifyArweaveSignatureWithPem(
   publicKeyPem: string
 ): boolean {
   try {
+    console.log('[Arweave] Verifying signature with PEM');
+    console.log('[Arweave] Message:', message);
+    console.log('[Arweave] Message length:', message.length);
+    console.log('[Arweave] Signature (first 50 chars):', signature.substring(0, 50));
+    console.log('[Arweave] Signature length:', signature.length);
+    console.log('[Arweave] PEM length:', publicKeyPem.length);
+    
     const signatureBuffer = Buffer.from(signature, "base64url");
     const messageBuffer = Buffer.from(message, "utf8");
 
-    return cryptoVerify(
+    console.log('[Arweave] Signature buffer length:', signatureBuffer.length);
+    console.log('[Arweave] Message buffer length:', messageBuffer.length);
+    
+    // Try different padding options
+    console.log('[Arweave] Trying RSA-PSS with SALTLEN_DIGEST...');
+    let result = cryptoVerify(
       "sha256",
       messageBuffer,
       {
@@ -194,7 +253,43 @@ export function verifyArweaveSignatureWithPem(
       },
       signatureBuffer
     );
-  } catch {
+    console.log('[Arweave] RSA-PSS SALTLEN_DIGEST result:', result);
+    
+    if (!result) {
+      // Try with SALTLEN_MAX_SIGN
+      console.log('[Arweave] Trying RSA-PSS with SALTLEN_MAX_SIGN...');
+      result = cryptoVerify(
+        "sha256",
+        messageBuffer,
+        {
+          key: publicKeyPem,
+          padding: constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: constants.RSA_PSS_SALTLEN_MAX_SIGN
+        },
+        signatureBuffer
+      );
+      console.log('[Arweave] RSA-PSS SALTLEN_MAX_SIGN result:', result);
+    }
+    
+    if (!result) {
+      // Try with PKCS1 padding (no PSS)
+      console.log('[Arweave] Trying RSA PKCS1 padding...');
+      result = cryptoVerify(
+        "sha256",
+        messageBuffer,
+        {
+          key: publicKeyPem,
+          padding: constants.RSA_PKCS1_PADDING
+        },
+        signatureBuffer
+      );
+      console.log('[Arweave] RSA PKCS1 result:', result);
+    }
+    
+    console.log('[Arweave] Final verify result:', result);
+    return result;
+  } catch (error) {
+    console.error('[Arweave] Verification error:', error);
     return false;
   }
 }
@@ -248,30 +343,59 @@ export class DefaultArweaveGateway implements ArweaveGateway {
    */
   async fetchTransactionData(address: string): Promise<ArweaveJWK | null> {
     try {
-      // Query for wallet's last transaction to get the owner (public key)
+      // Arweave addresses are hashes of public keys, not the keys themselves
+      // We need to find a transaction from this wallet to get the owner (public key)
+      
+      // Method 1: Try GraphQL API to find transactions by this address
+      const graphqlQuery = {
+        query: `{ transactions(owners: ["${address}"], first: 1) { edges { node { owner { address key } } } } }`
+      };
+      
+      console.log('[Arweave] Querying GraphQL for address:', address);
+      const graphqlResponse = await fetch(`${this.gatewayUrl}/graphql`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(graphqlQuery)
+      });
+      
+      if (graphqlResponse.ok) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = await graphqlResponse.json() as any;
+        const ownerKey = data?.data?.transactions?.edges?.[0]?.node?.owner?.key;
+        
+        if (ownerKey) {
+          console.log('[Arweave] Found public key via GraphQL');
+          const jwk: ArweaveJWK = {
+            kty: "RSA",
+            n: ownerKey,
+            e: "AQAB"
+          };
+          return jwk;
+        }
+      }
+      
+      // Method 2: Try direct transaction lookup (legacy)
       const queryUrl = `${this.gatewayUrl}/tx/${address}`;
+      console.log('[Arweave] Trying direct lookup:', queryUrl);
       const response = await fetch(queryUrl);
 
-      if (!response.ok) {
-        return null;
+      if (response.ok) {
+        const tx = await response.json() as { owner?: string };
+        if (tx.owner) {
+          console.log('[Arweave] Found owner in transaction');
+          const jwk: ArweaveJWK = {
+            kty: "RSA",
+            n: tx.owner,
+            e: "AQAB"
+          };
+          return jwk;
+        }
       }
 
-      const tx = await response.json() as { owner?: string };
-
-      if (!tx.owner) {
-        return null;
-      }
-
-      // The owner field is the base64url-encoded modulus (n)
-      // The exponent (e) is typically AQAB (65537)
-      const jwk: ArweaveJWK = {
-        kty: "RSA",
-        n: tx.owner,
-        e: "AQAB" // Standard exponent for Arweave
-      };
-
-      return jwk;
-    } catch {
+      console.log('[Arweave] Could not find public key for address:', address);
+      return null;
+    } catch (error) {
+      console.error('[Arweave] Error fetching public key:', error);
       return null;
     }
   }

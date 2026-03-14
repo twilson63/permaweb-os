@@ -136,14 +136,20 @@ export const createApp = (
 
   /**
    * Verifies a signed wallet challenge and returns a bearer session token.
-   * Supports Ethereum (eth-personal-sign) and Arweave (RSA-PSS-SHA256) signatures.
+   * Supports Ethereum (eth-personal-sign) and Arweave (transaction signature) signatures.
    *
-   * For Arweave wallets, optionally accepts a JWK public key to avoid gateway lookup.
+   * For Arweave wallets:
+   * - If using transaction signing, send: { address, message, signature, owner, walletType: 'arweave' }
+   * - If using signMessage (deprecated), send: { address, signature, jwk, walletType: 'arweave' }
+   * For Ethereum wallets:
+   * - Send: { address, signature, walletType: 'ethereum' }
    */
   app.post("/api/auth/verify", async (req, res) => {
     const address = typeof req.body?.address === "string" ? req.body.address : "";
     const signature = typeof req.body?.signature === "string" ? req.body.signature : "";
-    const jwk = req.body?.jwk; // Optional: for Arweave, pre-resolved public key
+    const message = typeof req.body?.message === "string" ? req.body.message : "";
+    const owner = typeof req.body?.owner === "string" ? req.body.owner : "";
+    const jwk = req.body?.jwk; // Optional: for Arweave signMessage (deprecated)
 
     if (!address || !signature) {
       authFailuresTotal.labels("missing_credentials").inc();
@@ -154,6 +160,57 @@ export const createApp = (
     authAttemptsTotal.labels("wallet").inc();
 
     try {
+      // For Arweave transaction signing, verify the transaction signature
+      if (owner && message) {
+        console.log('[Auth] Arweave transaction signature verification');
+        
+        // Extract transaction data from request
+        const txData = {
+          reward: typeof req.body?.reward === "string" ? req.body.reward : undefined,
+          lastTx: typeof req.body?.lastTx === "string" ? req.body.lastTx : undefined,
+          dataSize: typeof req.body?.dataSize === "string" ? req.body.dataSize : undefined,
+          dataRoot: typeof req.body?.dataRoot === "string" ? req.body.dataRoot : undefined,
+          tags: req.body?.tags
+        };
+        
+        // Verify the transaction signature using AuthStore
+        const isValid = await authStore.verifyArweaveTransactionSignature(
+          message,
+          signature,
+          owner,
+          address,
+          txData
+        );
+        
+        if (!isValid) {
+          authFailuresTotal.labels("invalid_signature").inc();
+          res.status(401).json({ error: "Invalid transaction signature" });
+          return;
+        }
+        
+        // Verify the message matches the challenge
+        const challenge = authStore.getChallenge(address);
+        
+        if (!challenge || challenge.message !== message) {
+          authFailuresTotal.labels("challenge_mismatch").inc();
+          res.status(401).json({ error: "Message does not match challenge" });
+          return;
+        }
+        
+        if (challenge.expiresAt < Date.now()) {
+          authFailuresTotal.labels("challenge_expired").inc();
+          res.status(401).json({ error: "Challenge expired" });
+          return;
+        }
+        
+        // Create session
+        authStore.deleteChallenge(address);
+        const session = authStore.createSessionSync(address);
+        res.json(session);
+        return;
+      }
+      
+      // Standard verification (Ethereum or Arweave signMessage)
       const session = await authStore.verifySignature(address, signature, jwk ? { jwk } : undefined);
 
       if (!session) {
@@ -165,6 +222,7 @@ export const createApp = (
       res.json(session);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to verify signature";
+      console.error('[Auth] Verification error:', error);
       authFailuresTotal.labels("verification_error").inc();
       res.status(400).json({ error: message });
     }

@@ -16,6 +16,7 @@ export interface CreatePodOptions {
   llmSecretName: string;
   ownerKeyId: string;
   ownerKeySecretName: string;
+  ownerPublicKey: string;  // Public key PEM for HTTPSig verification
   model: string;
 }
 
@@ -76,6 +77,9 @@ export class PodOrchestrator {
     }
 
     try {
+      // Create owner-key secret first (required for pod to mount)
+      await this.createOwnerKeySecret(opts);
+
       // Create Pod
       await this.createPod(opts);
 
@@ -175,14 +179,17 @@ export class PodOrchestrator {
             },
           },
           {
-            name: 'httpsig-sidecar',
-            image: 'registry.digitalocean.com/scout-live/web-os-sidecar:latest',
+            name: 'auth-proxy',
+            image: 'registry.digitalocean.com/scout-live/web-os-auth-proxy:latest',
             imagePullPolicy: 'Always',
-            ports: [{ containerPort: 3001, name: 'httpsig-http' }],
+            ports: [{ containerPort: 3001, name: 'auth-http' }],
             env: [
-              { name: 'PORT', value: '3001' },
-              { name: 'OWNER_KEY_ID', valueFrom: { fieldRef: { fieldPath: "metadata.annotations['owner-key-id']" } } },
+              { name: 'AUTH_PORT', value: '3001' },
+              { name: 'BACKEND_PORT', value: '4096' },
+              { name: 'OWNER_WALLET', value: opts.ownerWallet },
+              { name: 'OWNER_KEY_ID', value: opts.ownerKeyId },
               { name: 'OWNER_PUBLIC_KEY_PEM_FILE', value: '/secrets/owner/public-key.pem' },
+              { name: 'DOMAIN', value: this.baseDomain },
             ],
             volumeMounts: [
               { name: 'owner-key', mountPath: '/secrets/owner', readOnly: true },
@@ -197,6 +204,49 @@ export class PodOrchestrator {
     };
 
     await core.createNamespacedPod({ namespace: this.namespace, body: pod });
+  }
+
+  /**
+   * Creates a Kubernetes Secret for the owner's public key.
+   * This secret is mounted by the sidecar for HTTPSig verification.
+   */
+  async createOwnerKeySecret(opts: CreatePodOptions): Promise<void> {
+    if (!isKubernetesAvailable()) {
+      console.log('Kubernetes not available, skipping secret creation');
+      return;
+    }
+
+    const { core } = getKubernetesClient();
+
+    // Check if secret already exists
+    try {
+      await core.readNamespacedSecret({ namespace: this.namespace, name: opts.ownerKeySecretName });
+      console.log(`Secret ${opts.ownerKeySecretName} already exists, skipping creation`);
+      return;
+    } catch {
+      // Secret doesn't exist, create it
+    }
+
+    const secret = {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      metadata: {
+        name: opts.ownerKeySecretName,
+        namespace: this.namespace,
+        labels: {
+          'app.kubernetes.io/name': 'owner-key',
+          'app.kubernetes.io/part-of': 'web-os',
+          'owner-wallet': opts.ownerWallet,
+        },
+      },
+      type: 'Opaque',
+      data: {
+        'public-key.pem': Buffer.from(opts.ownerPublicKey).toString('base64'),
+      },
+    };
+
+    await core.createNamespacedSecret({ namespace: this.namespace, body: secret });
+    console.log(`Created secret ${opts.ownerKeySecretName} for owner ${opts.ownerWallet}`);
   }
 
   /**
@@ -220,8 +270,8 @@ export class PodOrchestrator {
       spec: {
         selector: { 'pod-id': podId.slice(0, 8) },
         ports: [
+          { name: 'auth-http', port: 3001, targetPort: 3001 },
           { name: 'opencode-http', port: 4096, targetPort: 4096 },
-          { name: 'httpsig-http', port: 3001, targetPort: 3001 },
         ],
       },
     };
@@ -250,7 +300,7 @@ export class PodOrchestrator {
       },
       spec: {
         ingressClassName: 'nginx',
-        tls: [{ hosts: [host], secretName: 'web-os-tls' }],
+        tls: [{ hosts: [host], secretName: 'pods-wildcard-tls' }],
         rules: [{
           host,
           http: {
@@ -258,7 +308,7 @@ export class PodOrchestrator {
               path: '/',
               pathType: 'Prefix',
               backend: {
-                service: { name: ingressName, port: { name: 'opencode-http' } },
+                service: { name: ingressName, port: { name: 'auth-http' } },
               },
             }],
           },

@@ -267,7 +267,7 @@ export class PodStore {
     const llmSecretName = this.resolveLlmSecretName(ownerWallet);
     
     // Get or create owner key for HTTPSig verification
-    const { keyId, secretName: ownerKeySecretName } = this.getOrCreateOwnerKey(ownerWallet);
+    const { keyId, publicKeyPem, secretName: ownerKeySecretName } = this.getOrCreateOwnerKey(ownerWallet);
     
     const pod: Pod = {
       id,
@@ -296,6 +296,7 @@ export class PodStore {
         llmSecretName,
         ownerKeyId: keyId,
         ownerKeySecretName,
+        ownerPublicKey: publicKeyPem,
         model: llm.model
       }).then(result => {
         if (result.status === 'failed') {
@@ -326,7 +327,7 @@ export class PodStore {
     const llmSecretName = await this.resolveLlmSecretNameAsync(ownerWallet);
     
     // Get or create owner key for HTTPSig verification
-    const { keyId, secretName: ownerKeySecretName } = this.getOrCreateOwnerKey(ownerWallet);
+    const { keyId, publicKeyPem, secretName: ownerKeySecretName } = this.getOrCreateOwnerKey(ownerWallet);
     
     const pod: Pod = {
       id,
@@ -355,6 +356,7 @@ export class PodStore {
           llmSecretName,
           ownerKeyId: keyId,
           ownerKeySecretName,
+          ownerPublicKey: publicKeyPem,
           model: llm.model
         });
 

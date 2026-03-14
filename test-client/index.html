@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Permaweb OS - Test Client</title>
+  <title>Permaweb OS - Test Client v25</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -156,6 +156,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/arweave@1.15.7/bundles/arweave.bundle.min.js"></script>
   <script type="module">
     // Configuration
     const API_URL = 'https://api.permaweb.run';
@@ -222,13 +223,17 @@
           return;
         }
         
-        // Request permissions - both use the same API
+        // Connect with minimal permissions first
+        // Additional permissions will be requested when needed
         if (wallet.connect) {
           try {
-            await wallet.connect(['ACCESS_ADDRESS', 'ACCESS_ALL_PUBLIC_KEYS']);
-          } catch (permError) {
-            console.log('Trying alternative permissions...', permError);
+            // Start with just ACCESS_ADDRESS
             await wallet.connect(['ACCESS_ADDRESS']);
+            console.log('Connected with ACCESS_ADDRESS');
+          } catch (permError) {
+            console.log('Connection failed:', permError);
+            showStatus(elements.walletStatus, 'Could not connect wallet: ' + (permError.message || permError), 'error');
+            return;
           }
         }
         
@@ -299,33 +304,88 @@
         if (walletType === 'arweave') {
           const wallet = window.wander || window.arweaveWallet;
           
-          // Arweave wallets expect ArrayBuffer/Uint8Array
-          const encoder = new TextEncoder();
-          const messageBytes = encoder.encode(messageToSign);
-          
           try {
-            // Wander/ArConnect signature
-            const signatureBytes = await wallet.signMessage(messageBytes, { algorithm: 'RSA-PSS-SHA256' });
+            // Request SIGN_TRANSACTION permission
+            console.log('Requesting SIGN_TRANSACTION permission...');
+            await wallet.connect(['SIGN_TRANSACTION', 'ACCESS_ADDRESS']);
+            console.log('SIGN_TRANSACTION permission granted');
             
-            // Convert signature to base64url
-            if (signatureBytes instanceof Uint8Array) {
-              signature = btoa(String.fromCharCode(...signatureBytes))
-                .replace(/\+/g, '-')
-                .replace(/\//g, '_')
-                .replace(/=/g, '');
-            } else if (signatureBytes instanceof ArrayBuffer) {
-              const bytes = new Uint8Array(signatureBytes);
-              signature = btoa(String.fromCharCode(...bytes))
-                .replace(/\+/g, '-')
-                .replace(/\//g, '_')
-                .replace(/=/g, '');
+            // Use ArweaveJS (loaded via script tag) to create transaction
+            const arweave = Arweave.init({ host: 'arweave.net', port: 443, protocol: 'https' });
+            console.log('Creating transaction with auth message...');
+            const tx = await arweave.createTransaction({ data: messageToSign });
+            console.log('Transaction created:', tx);
+            
+            // Sign the transaction using Wander
+            console.log('Signing transaction with wallet...');
+            const signedTx = await wallet.sign(tx);
+            console.log('Transaction signed:', signedTx);
+            
+            // Extract ALL relevant fields from the signed transaction
+            // The server needs: signature, owner, AND the exact values used during signing
+            // (reward, last_tx, data_size, data_root, tags)
+            signature = signedTx.signature;
+            const owner = signedTx.owner;
+            const txId = signedTx.id;
+            const reward = signedTx.reward;
+            const lastTx = signedTx.last_tx;
+            const dataSize = signedTx.data_size;
+            const dataRoot = signedTx.data_root;
+            const tags = signedTx.tags || [];
+            
+            console.log('Extracted signature:', signature);
+            console.log('Extracted owner:', owner);
+            console.log('Transaction ID:', txId);
+            console.log('Reward:', reward);
+            console.log('Last TX:', lastTx);
+            console.log('Data size:', dataSize);
+            console.log('Data root:', dataRoot);
+            console.log('Tags:', tags);
+            
+            // Verify signature
+            showStatus(elements.authStatus, 'Verifying signature...', 'info');
+            
+            const verifyBody = {
+              address: walletAddress,
+              message: messageToSign,
+              signature: signature,
+              owner: owner,
+              txId: txId,
+              reward: reward,
+              lastTx: lastTx,
+              dataSize: dataSize,
+              dataRoot: dataRoot,
+              tags: tags,
+              walletType: walletType
+            };
+            
+            console.log('Sending verify request:', verifyBody);
+            
+            const verifyResponse = await fetch(`${API_URL}/api/auth/verify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(verifyBody)
+            });
+            
+            const verifyData = await verifyResponse.json();
+            console.log('Verify response:', verifyData);
+            
+            if (verifyData.token) {
+              sessionToken = verifyData.token;
+              showStatus(elements.authStatus, '✓ Authenticated successfully!', 'success');
+              elements.logoutBtn.style.display = 'inline-block';
+              elements.podsBtn.disabled = false;
+              elements.keysBtn.disabled = false;
+              elements.createPodBtn.disabled = false;
+              elements.registerKeysBtn.disabled = false;
             } else {
-              // Already in correct format
-              signature = signatureBytes;
+              throw new Error(verifyData.error || 'Authentication failed');
             }
+            
+            return; // Skip the common verify path for Arweave
           } catch (signError) {
-            console.error('Arweave signature error:', signError);
-            throw new Error('Failed to sign with Arweave wallet: ' + signError.message);
+            console.error('Arweave transaction signing error:', signError);
+            throw new Error('Failed to sign transaction with Arweave wallet: ' + (signError.message || signError));
           }
         } else {
           // Ethereum (MetaMask)

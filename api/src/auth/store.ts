@@ -58,6 +58,10 @@ interface StoredSession {
 interface ArweaveVerifyOptions {
   /** Pre-resolved JWK public key (avoids gateway lookup) */
   jwk?: ArweaveJWK;
+  /** Transaction owner (public key modulus) for transaction signature verification */
+  owner?: string;
+  /** Transaction signature for transaction-based auth */
+  txSignature?: string;
 }
 
 /**
@@ -136,11 +140,16 @@ export class AuthStore {
     const addressKey = this.getChallengeKey(normalizedAddress);
     const challenge = this.challenges.get(addressKey);
 
+    console.log(`[Auth] Verifying signature for ${walletType} address: ${normalizedAddress}`);
+    console.log(`[Auth] Challenge found:`, challenge ? 'yes' : 'no');
+
     if (!challenge) {
+      console.log(`[Auth] No challenge found for address: ${addressKey}`);
       return null;
     }
 
     if (challenge.expiresAt < Date.now()) {
+      console.log(`[Auth] Challenge expired for address: ${addressKey}`);
       this.challenges.delete(addressKey);
       return null;
     }
@@ -150,16 +159,22 @@ export class AuthStore {
 
     if (walletType === "ethereum") {
       isValid = this.verifyEthereumSignature(challenge.message, signature, addressKey);
+      console.log(`[Auth] Ethereum signature valid:`, isValid);
     } else if (walletType === "arweave") {
+      console.log(`[Auth] Verifying Arweave signature...`);
+      console.log(`[Auth] Message:`, challenge.message.substring(0, 100));
+      console.log(`[Auth] Signature length:`, signature.length);
       isValid = await this.verifyArweaveSignature(
         challenge.message,
         signature,
         normalizedAddress,
         options
       );
+      console.log(`[Auth] Arweave signature valid:`, isValid);
     }
 
     if (!isValid) {
+      console.log(`[Auth] Signature verification failed for ${walletType} address: ${normalizedAddress}`);
       return null;
     }
 
@@ -273,6 +288,155 @@ export class AuthStore {
   }
 
   /**
+   * Verifies an Arweave transaction signature.
+   * This is used when the client signs an Arweave transaction containing the auth message.
+   *
+   * @param message - The auth message that was signed.
+   * @param signature - Base64URL-encoded transaction signature.
+   * @param owner - Base64URL-encoded public key modulus (owner field of transaction).
+   * @param address - Arweave wallet address.
+   * @param txData - Additional transaction data (reward, last_tx, data_size, data_root, tags).
+   * @returns `true` if signature is valid.
+   */
+  async verifyArweaveTransactionSignature(
+    message: string,
+    signature: string,
+    owner: string,
+    address: string,
+    txData?: {
+      reward?: string;
+      lastTx?: string;
+      dataSize?: string;
+      dataRoot?: string;
+      tags?: Array<{ name: string; value: string }>;
+    }
+  ): Promise<boolean> {
+    try {
+      // Import Arweave and deepHash dynamically
+      const Arweave = (await import("arweave")).default;
+      const deepHash = (await import("arweave/node/lib/deepHash")).default;
+      
+      console.log('[ArweaveTx] Verifying transaction signature');
+      console.log('[ArweaveTx] Message length:', message.length);
+      console.log('[ArweaveTx] Owner length:', owner.length);
+      console.log('[ArweaveTx] Signature length:', signature.length);
+      console.log('[ArweaveTx] Address:', address);
+      console.log('[ArweaveTx] TX Data:', txData);
+      
+      // Verify owner matches address
+      // Arweave address = SHA-256(owner modulus)
+      const ownerBuffer = Arweave.utils.b64UrlToBuffer(owner);
+      const ownerHash = await Arweave.crypto.hash(ownerBuffer, "SHA-256");
+      const derivedAddress = Arweave.utils.bufferTob64Url(ownerHash);
+      
+      console.log('[ArweaveTx] Derived address:', derivedAddress);
+      
+      if (derivedAddress !== address) {
+        console.log('[ArweaveTx] Address mismatch');
+        return false;
+      }
+      
+      // Use the exact values from the client's transaction
+      // These are required for the signature to verify correctly
+      const reward = txData?.reward || "0";
+      const lastTx = txData?.lastTx || "";
+      const dataSize = txData?.dataSize || message.length.toString();
+      const dataRoot = txData?.dataRoot;
+      const tags = txData?.tags || [];
+      
+      // If no data_root provided, compute it from the message
+      let dataRootBuffer: Uint8Array;
+      if (dataRoot) {
+        dataRootBuffer = Arweave.utils.b64UrlToBuffer(dataRoot);
+      } else {
+        // Compute merkle root for the data
+        // For small data (< 2.5MB), this is just SHA-256
+        const dataBuffer = Arweave.utils.stringToBuffer(message);
+        dataRootBuffer = await Arweave.crypto.hash(dataBuffer, "SHA-256");
+      }
+      
+      // Convert tags to the format expected by deepHash
+      // Tags is an array of [name, value] pairs, where name and value are base64url encoded
+      const tagList = tags.map(tag => [
+        Arweave.utils.b64UrlToBuffer(tag.name),
+        Arweave.utils.b64UrlToBuffer(tag.value)
+      ]);
+      
+      // Build deep hash input for format 2 (ANS-104)
+      // The signature is over deepHash([
+      //   format (as string),
+      //   owner (decoded),
+      //   target (decoded),
+      //   quantity (as string),
+      //   reward (as string),
+      //   last_tx (decoded),
+      //   tags (as list of [name, value] pairs),
+      //   data_size (as string),
+      //   data_root (decoded)
+      // ])
+      const deepHashInput = [
+        Arweave.utils.stringToBuffer("2"), // format
+        Arweave.utils.b64UrlToBuffer(owner), // owner
+        new Uint8Array(0), // target (empty for data tx)
+        Arweave.utils.stringToBuffer("0"), // quantity
+        Arweave.utils.stringToBuffer(reward), // reward (from client)
+        lastTx ? Arweave.utils.b64UrlToBuffer(lastTx) : new Uint8Array(0), // last_tx (from client)
+        tagList, // tags (from client)
+        Arweave.utils.stringToBuffer(dataSize), // data_size (from client)
+        dataRootBuffer, // data_root (from client or computed)
+      ];
+      
+      // Compute deep hash
+      const hash = await deepHash(deepHashInput);
+      const signatureBuffer = Arweave.utils.b64UrlToBuffer(signature);
+      
+      console.log('[ArweaveTx] Deep hash computed');
+      console.log('[ArweaveTx] Signature buffer length:', signatureBuffer.length);
+      
+      // Verify signature
+      const isValid = await Arweave.crypto.verify(owner, hash, signatureBuffer);
+      
+      console.log('[ArweaveTx] Verification result:', isValid);
+      return isValid;
+    } catch (error) {
+      console.error('[ArweaveTx] Verification error:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Gets the challenge for a given address (for transaction verification).
+   *
+   * @param address - Wallet address.
+   * @returns Challenge record or undefined.
+   */
+  getChallenge(address: string): ChallengeRecord | undefined {
+    const key = this.getChallengeKey(address);
+    return this.challenges.get(key);
+  }
+
+  /**
+   * Deletes a challenge after successful verification.
+   *
+   * @param address - Wallet address.
+   */
+  deleteChallenge(address: string): void {
+    const key = this.getChallengeKey(address);
+    this.challenges.delete(key);
+  }
+
+  /**
+   * Creates and stores a new session for an authenticated address.
+   * Synchronous version for transaction verification.
+   *
+   * @param address - Normalized wallet address.
+   * @returns Public session payload.
+   */
+  createSessionSync(address: string): SessionRecord {
+    return this.createSession(address);
+  }
+
+  /**
    * Creates and stores a new session for an authenticated address.
    *
    * @param address - Normalized wallet address.
@@ -372,15 +536,50 @@ export class AuthStore {
     options?: ArweaveVerifyOptions
   ): Promise<boolean> {
     try {
-      // If JWK provided directly, use it
-      if (options?.jwk) {
-        return verifyArweaveSignatureWithJwk(message, signature, options.jwk);
+      // Parse JWK if it's a string
+      let jwk = options?.jwk;
+      if (typeof jwk === 'string') {
+        console.log('[Auth] JWK is string, parsing...');
+        try {
+          jwk = JSON.parse(jwk);
+          console.log('[Auth] JWK parsed successfully');
+        } catch (parseError) {
+          console.error('[Auth] Failed to parse JWK:', parseError);
+          return false;
+        }
+      }
+      
+      // If JWK provided, use Arweave SDK for verification
+      if (jwk) {
+        const jwkObj = jwk as unknown as Record<string, unknown>;
+        console.log('[Auth] JWK kty:', jwkObj.kty);
+        console.log('[Auth] JWK n length:', jwkObj.n ? String(jwkObj.n).length : 'missing');
+        console.log('[Auth] JWK e:', jwkObj.e);
+        
+        // Use Arweave SDK for verification (recommended)
+        const { verifyArweaveSignatureWithSdk } = await import("./arweave.js");
+        const isValid = await verifyArweaveSignatureWithSdk(message, signature, jwk as ArweaveJWK);
+        console.log('[Auth] Arweave SDK verification result:', isValid);
+        return isValid;
       }
 
       // Otherwise, resolve from gateway
-      const { verifyArweaveSignature: verify } = await import("./arweave.js");
-      return await verify(message, signature, address);
-    } catch {
+      console.log('[Auth] Resolving public key from Arweave gateway for:', address);
+      const { resolveArweavePublicKey } = await import("./arweave.js");
+      const resolvedJwk = await resolveArweavePublicKey(address);
+      
+      if (!resolvedJwk) {
+        console.log('[Auth] Failed to resolve public key from gateway');
+        return false;
+      }
+      
+      console.log('[Auth] Got JWK from gateway, verifying...');
+      const { verifyArweaveSignatureWithSdk } = await import("./arweave.js");
+      const result = await verifyArweaveSignatureWithSdk(message, signature, resolvedJwk);
+      console.log('[Auth] Verification result:', result);
+      return result;
+    } catch (error) {
+      console.error('[Auth] Arweave verification error:', error);
       return false;
     }
   }

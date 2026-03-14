@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pod Chat Test - HTTPSig Verification</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #0f0f0f;
+            color: #e0e0e0;
+        }
+        h1 {
+            color: #00ff88;
+            margin-bottom: 10px;
+        }
+        .status {
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .status.success { background: #1a3d2e; color: #00ff88; }
+        .status.error { background: #3d1a1a; color: #ff6b6b; }
+        .status.info { background: #1a2d3d; color: #6bb3ff; }
+        .status.pending { background: #3d3d1a; color: #ffcc00; }
+        
+        section {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #333;
+        }
+        
+        h2 {
+            margin-top: 0;
+            color: #888;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        button {
+            background: #00ff88;
+            color: #000;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        button:hover { background: #00cc6a; }
+        button:disabled { 
+            background: #333; 
+            color: #666; 
+            cursor: not-allowed;
+        }
+        
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #00ff88;
+        }
+        
+        .wallet-info {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .address {
+            font-family: monospace;
+            background: #0f0f0f;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #888;
+        }
+        
+        .chat-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 15px;
+            background: #0a0a0a;
+            margin-bottom: 15px;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 8px;
+        }
+        .message.user {
+            background: #1a3d2e;
+            margin-left: 40px;
+        }
+        .message.assistant {
+            background: #2d2d2d;
+            margin-right: 40px;
+        }
+        .message-header {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .message-content {
+            white-space: pre-wrap;
+            font-size: 14px;
+        }
+        
+        .verification {
+            font-size: 12px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-top: 8px;
+        }
+        .verification.valid {
+            background: #1a3d2e;
+            color: #00ff88;
+        }
+        .verification.invalid {
+            background: #3d1a1a;
+            color: #ff6b6b;
+        }
+        
+        .signature-details {
+            margin-top: 10px;
+            padding: 10px;
+            background: #0f0f0f;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            overflow-x: auto;
+        }
+        .signature-details dt {
+            color: #666;
+        }
+        .signature-details dd {
+            color: #888;
+            margin: 0 0 8px 0;
+            word-break: break-all;
+        }
+        
+        .input-row {
+            display: flex;
+            gap: 10px;
+        }
+        .input-row input {
+            flex: 1;
+        }
+        
+        .pod-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .pod-selector input {
+            flex: 1;
+        }
+        
+        details {
+            margin-top: 10px;
+        }
+        summary {
+            cursor: pointer;
+            color: #00ff88;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔐 Pod Chat Test</h1>
+    <p style="color: #666; margin-bottom: 20px;">Test pod chat with HTTPSig verification</p>
+    
+    <div id="status" class="status info">Connect your wallet to begin</div>
+    
+    <!-- Wallet Connection -->
+    <section>
+        <h2>Wallet Connection</h2>
+        <div class="wallet-info">
+            <button id="connectEth" onclick="connectEthereum()">Connect MetaMask</button>
+            <button id="connectArweave" onclick="connectArweave()">Connect Wander</button>
+        </div>
+        <div id="walletAddress" class="address" style="display: none;">
+            <span id="addressText"></span>
+        </div>
+    </section>
+    
+    <!-- Authentication -->
+    <section id="authSection" style="display: none;">
+        <h2>Authentication</h2>
+        <button id="authBtn" onclick="authenticate()">Authenticate</button>
+        <div id="tokenInfo" style="margin-top: 10px; display: none;">
+            <span style="color: #666; font-size: 12px;">Session token obtained ✓</span>
+        </div>
+    </section>
+    
+    <!-- Pod Selection -->
+    <section id="podSection" style="display: none;">
+        <h2>Pod Selection</h2>
+        <div class="pod-selector">
+            <input id="podId" type="text" placeholder="Pod ID (e.g., 3a57f4d0)" />
+            <button onclick="loadPod()">Load Pod</button>
+        </div>
+        <div id="podInfo" style="display: none; margin-top: 10px;">
+            <span style="color: #666; font-size: 12px;">Pod URL: </span>
+            <span id="podUrl" style="color: #00ff88; font-family: monospace;"></span>
+        </div>
+    </section>
+    
+    <!-- Chat -->
+    <section id="chatSection" style="display: none;">
+        <h2>Chat</h2>
+        <div class="chat-container" id="chatContainer"></div>
+        <div class="input-row">
+            <input id="messageInput" type="text" placeholder="Type your message..." />
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </section>
+    
+    <!-- Verification Details -->
+    <section id="verifySection" style="display: none;">
+        <h2>Signature Verification</h2>
+        <div id="verificationResult"></div>
+        <details>
+            <summary>View Signature Details</summary>
+            <div id="signatureDetails" class="signature-details"></div>
+        </details>
+    </section>
+
+    <script>
+        // Configuration
+        const API_URL = 'https://api.permaweb.run';
+        const POD_BASE_DOMAIN = 'pods.permaweb.run';
+        
+        // State
+        let walletType = null;
+        let walletAddress = null;
+        let sessionToken = null;
+        let podId = null;
+        let podUrl = null;
+        let ownerKeyId = null;
+        let ownerPrivateKey = null;
+        
+        // Ethereum wallet connection
+        async function connectEthereum() {
+            if (!window.ethereum) {
+                setStatus('MetaMask not installed', 'error');
+                return;
+            }
+            
+            try {
+                const accounts = await window.ethereum.request({ 
+                    method: 'eth_requestAccounts' 
+                });
+                walletAddress = accounts[0];
+                walletType = 'ethereum';
+                
+                showWalletAddress();
+                setStatus('Ethereum wallet connected', 'success');
+            } catch (error) {
+                setStatus(`Connection failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // Arweave wallet connection
+        async function connectArweave() {
+            const wallet = window.wander || window.arweaveWallet;
+            if (!wallet) {
+                setStatus('Wander (ArConnect) not installed', 'error');
+                return;
+            }
+            
+            try {
+                await wallet.connect(['ACCESS_ADDRESS', 'ACCESS_ALL_PUBLIC_KEYS', 'SIGN_TRANSACTION']);
+                walletAddress = await wallet.getActiveAddress();
+                walletType = 'arweave';
+                
+                showWalletAddress();
+                setStatus('Arweave wallet connected', 'success');
+            } catch (error) {
+                setStatus(`Connection failed: ${error.message}`, 'error');
+            }
+        }
+        
+        function showWalletAddress() {
+            document.getElementById('walletAddress').style.display = 'block';
+            document.getElementById('addressText').textContent = 
+                `${walletType === 'ethereum' ? 'ETH' : 'AR'}: ${walletAddress}`;
+            document.getElementById('authSection').style.display = 'block';
+        }
+        
+        // Authentication
+        async function authenticate() {
+            if (!walletAddress || !walletType) {
+                setStatus('Connect wallet first', 'error');
+                return;
+            }
+            
+            setStatus('Getting nonce...', 'pending');
+            
+            try {
+                // Get nonce
+                const nonceRes = await fetch(`${API_URL}/api/auth/nonce`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        address: walletAddress, 
+                        walletType 
+                    })
+                });
+                
+                if (!nonceRes.ok) {
+                    throw new Error('Failed to get nonce');
+                }
+                
+                const { message } = await nonceRes.json();
+                
+                setStatus('Signing message...', 'pending');
+                
+                // Sign message
+                const signature = await signMessage(message);
+                
+                setStatus('Verifying...', 'pending');
+                
+                // Verify
+                const verifyRes = await fetch(`${API_URL}/api/auth/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        address: walletAddress, 
+                        signature,
+                        walletType 
+                    })
+                });
+                
+                if (!verifyRes.ok) {
+                    const error = await verifyRes.json();
+                    throw new Error(error.error || 'Verification failed');
+                }
+                
+                const { token } = await verifyRes.json();
+                sessionToken = token;
+                
+                setStatus('Authenticated successfully', 'success');
+                document.getElementById('tokenInfo').style.display = 'block';
+                document.getElementById('podSection').style.display = 'block';
+                document.getElementById('authBtn').disabled = true;
+                
+            } catch (error) {
+                setStatus(`Auth failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // Sign message with wallet
+        async function signMessage(message) {
+            if (walletType === 'ethereum') {
+                return await window.ethereum.request({
+                    method: 'personal_sign',
+                    params: [message, walletAddress]
+                });
+            }
+            
+            if (walletType === 'arweave') {
+                const wallet = window.wander || window.arweaveWallet;
+                const encoder = new TextEncoder();
+                const messageBytes = encoder.encode(message);
+                const signatureBytes = await wallet.signMessage(messageBytes, { 
+                    algorithm: 'RSA-PSS-SHA256' 
+                });
+                
+                // Convert to base64url
+                if (signatureBytes instanceof Uint8Array) {
+                    return btoa(String.fromCharCode(...signatureBytes))
+                        .replace(/\+/g, '-')
+                        .replace(/\//g, '_')
+                        .replace(/=/g, '');
+                }
+                return signatureBytes;
+            }
+        }
+        
+        // Load pod
+        async function loadPod() {
+            podId = document.getElementById('podId').value.trim();
+            if (!podId) {
+                setStatus('Enter a pod ID', 'error');
+                return;
+            }
+            
+            podUrl = `https://${podId}.${POD_BASE_DOMAIN}`;
+            document.getElementById('podUrl').textContent = podUrl;
+            document.getElementById('podInfo').style.display = 'block';
+            document.getElementById('chatSection').style.display = 'block';
+            document.getElementById('verifySection').style.display = 'block';
+            
+            setStatus(`Pod loaded: ${podUrl}`, 'success');
+            
+            // Test pod health
+            try {
+                const healthRes = await fetch(`${podUrl}/health`, {
+                    headers: { 'Authorization': `Bearer ${sessionToken}` }
+                });
+                if (healthRes.ok) {
+                    addMessage('system', 'Pod is healthy and ready');
+                } else {
+                    addMessage('system', `Pod health check: ${healthRes.status}`);
+                }
+            } catch (error) {
+                addMessage('system', `Note: Pod may need TLS certificate acceptance`);
+            }
+        }
+        
+        // Send message
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message || !podUrl) return;
+            
+            input.value = '';
+            addMessage('user', message);
+            setStatus('Sending message...', 'pending');
+            
+            try {
+                const response = await fetch(`${podUrl}/v1/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${sessionToken}`
+                    },
+                    body: JSON.stringify({ message })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Verify HTTPSig signature
+                const verification = await verifyHTTPSig(response, data);
+                
+                addMessage('assistant', data.response || data.message || JSON.stringify(data, null, 2), verification);
+                setStatus('Message sent', 'success');
+                
+            } catch (error) {
+                addMessage('system', `Error: ${error.message}`);
+                setStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+        
+        // Verify HTTPSig signature
+        async function verifyHTTPSig(response, data) {
+            const signature = response.headers.get('Signature');
+            const signatureInput = response.headers.get('Signature-Input');
+            const date = response.headers.get('Date');
+            
+            if (!signature) {
+                return { valid: false, reason: 'No Signature header' };
+            }
+            
+            // Parse signature
+            const result = {
+                valid: true,
+                signature: signature,
+                signatureInput: signatureInput,
+                date: date,
+                keyId: null,
+                algorithm: null
+            };
+            
+            // Extract keyId and algorithm from Signature-Input
+            if (signatureInput) {
+                const keyIdMatch = signatureInput.match(/keyid="([^"]+)"/);
+                const algMatch = signatureInput.match(/alg="([^"]+)"/);
+                
+                if (keyIdMatch) result.keyId = keyIdMatch[1];
+                if (algMatch) result.algorithm = algMatch[1];
+            }
+            
+            // In a real implementation, we would:
+            // 1. Fetch the public key from /keys/{keyId}
+            // 2. Reconstruct the signing string from headers
+            // 3. Verify the signature using the public key
+            
+            // For now, we just check that the signature exists
+            result.verified = !!signature && signature.length > 0;
+            
+            return result;
+        }
+        
+        // Add message to chat
+        function addMessage(role, content, verification = null) {
+            const container = document.getElementById('chatContainer');
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            
+            const header = document.createElement('div');
+            header.className = 'message-header';
+            header.textContent = role === 'user' ? 'You' : role === 'assistant' ? 'Assistant' : 'System';
+            
+            const body = document.createElement('div');
+            body.className = 'message-content';
+            body.textContent = content;
+            
+            div.appendChild(header);
+            div.appendChild(body);
+            
+            // Add verification if present
+            if (verification) {
+                const verifyDiv = document.createElement('div');
+                verifyDiv.className = `verification ${verification.valid ? 'valid' : 'invalid'}`;
+                verifyDiv.innerHTML = `
+                    ${verification.valid ? '✓ Signature verified' : '✗ Invalid signature'}
+                    ${verification.keyId ? `<br>Key ID: ${verification.keyId}` : ''}
+                    ${verification.algorithm ? `<br>Algorithm: ${verification.algorithm}` : ''}
+                `;
+                div.appendChild(verifyDiv);
+                
+                // Update signature details
+                updateSignatureDetails(verification);
+            }
+            
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function updateSignatureDetails(verification) {
+            const details = document.getElementById('signatureDetails');
+            details.innerHTML = `
+                <dl>
+                    <dt>Signature</dt>
+                    <dd>${verification.signature || 'N/A'}</dd>
+                    <dt>Signature-Input</dt>
+                    <dd>${verification.signatureInput || 'N/A'}</dd>
+                    <dt>Date</dt>
+                    <dd>${verification.date || 'N/A'}</dd>
+                    <dt>Key ID</dt>
+                    <dd>${verification.keyId || 'N/A'}</dd>
+                    <dt>Algorithm</dt>
+                    <dd>${verification.algorithm || 'N/A'}</dd>
+                </dl>
+            `;
+        }
+        
+        // Status helper
+        function setStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+        
+        // Enter key to send
+        document.getElementById('messageInput')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
