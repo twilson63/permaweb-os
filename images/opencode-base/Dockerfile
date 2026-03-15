@@ -4,8 +4,20 @@ ENV OPENCODE_HOST=0.0.0.0
 ENV OPENCODE_PORT=4096
 ENV HOME=/home/opencode
 
-# Install Node.js, git, and other tools
-RUN apk add --no-cache nodejs npm git
+# Install Node.js, dev tools, and common utilities
+RUN apk add --no-cache \
+    nodejs npm \
+    git \
+    make cmake gcc g++ \
+    python3 py3-pip \
+    rust cargo \
+    go \
+    jq yq \
+    curl wget \
+    zip unzip \
+    bash zsh \
+    htop \
+    netcat-openbsd
 
 # Create user and set permissions
 RUN addgroup -S opencode && adduser -S -G opencode -h /home/opencode opencode
