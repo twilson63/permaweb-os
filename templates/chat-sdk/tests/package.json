@@ -1,0 +1,27 @@
+{
+  "name": "@web-os/chat-sdk-tests",
+  "version": "0.1.0",
+  "description": "Unit tests for Web-OS Chat SDK templates",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:vanilla": "vitest run vanilla",
+    "test:react": "vitest run react",
+    "test:e2e": "vitest run e2e"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^14.0.0",
+    "@testing-library/user-event": "^14.5.0",
+    "happy-dom": "^13.0.0",
+    "jsdom": "^24.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "dependencies": {
+    "arweave": "^1.15.7"
+  }
+}
