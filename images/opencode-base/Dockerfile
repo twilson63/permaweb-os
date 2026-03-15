@@ -4,8 +4,8 @@ ENV OPENCODE_HOST=0.0.0.0
 ENV OPENCODE_PORT=4096
 ENV HOME=/home/opencode
 
-# Install Node.js (needed for MCP servers and other tools)
-RUN apk add --no-cache nodejs npm
+# Install Node.js, git, and other tools
+RUN apk add --no-cache nodejs npm git
 
 # Create user and set permissions
 RUN addgroup -S opencode && adduser -S -G opencode -h /home/opencode opencode
