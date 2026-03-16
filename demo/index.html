@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PermawebOS Agent API Demo</title>
+    <style>
+        :root {
+            --bg-primary: #0a0a0a;
+            --bg-secondary: #141414;
+            --bg-tertiary: #1f1f1f;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --success: #22c55e;
+            --error: #ef4444;
+            --border: #2a2a2a;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--error);
+        }
+        
+        .status-dot.connected {
+            background: var(--success);
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+        
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border);
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+        
+        .card-subtitle {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+        
+        .btn {
+            padding: 0.625rem 1.25rem;
+            border-radius: 8px;
+            border: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 0.625rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            font-family: inherit;
+        }
+        
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+        
+        .input-group {
+            margin-bottom: 1rem;
+        }
+        
+        .input-label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+        
+        .endpoint-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        
+        .endpoint-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .endpoint-item:hover {
+            background: var(--border);
+        }
+        
+        .endpoint-item.active {
+            background: var(--accent);
+            background: rgba(99, 102, 241, 0.2);
+            border: 1px solid var(--accent);
+        }
+        
+        .method {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            min-width: 50px;
+            text-align: center;
+        }
+        
+        .method-get { background: #22c55e33; color: #22c55e; }
+        .method-post { background: #6366f133; color: #6366f1; }
+        .method-delete { background: #ef444433; color: #ef4444; }
+        
+        .endpoint-path {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.875rem;
+        }
+        
+        .log-container {
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.8rem;
+        }
+        
+        .log-entry {
+            margin-bottom: 0.5rem;
+            padding: 0.5rem;
+            border-radius: 4px;
+            background: var(--bg-tertiary);
+        }
+        
+        .log-entry.request {
+            border-left: 3px solid var(--accent);
+        }
+        
+        .log-entry.response {
+            border-left: 3px solid var(--success);
+        }
+        
+        .log-entry.error {
+            border-left: 3px solid var(--error);
+        }
+        
+        .log-entry.event {
+            border-left: 3px solid #f59e0b;
+        }
+        
+        .log-time {
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+        }
+        
+        .log-method {
+            font-weight: 600;
+        }
+        
+        pre {
+            margin: 0.5rem 0 0 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        
+        .session-info {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        .session-id {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.875rem;
+            color: var(--accent);
+        }
+        
+        .wallet-address {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .tab {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            background: var(--bg-tertiary);
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+        
+        .tab.active {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .code-block {
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 1rem;
+            overflow-x: auto;
+        }
+        
+        code {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.8rem;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .events-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .event-item {
+            padding: 0.5rem;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            margin-bottom: 0.25rem;
+            font-size: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>🤖 PermawebOS Agent API Demo</h1>
+                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem;">
+                    OpenCode REST API - Sessions, Messages, Events
+                </p>
+            </div>
+            <div class="status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Not connected</span>
+            </div>
+        </header>
+        
+        <!-- Wallet Connection -->
+        <div class="card" style="margin-bottom: 1.5rem;" id="walletSection">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">🔐 Wallet Connection</div>
+                    <div class="card-subtitle">Connect your Arweave wallet to authenticate</div>
+                </div>
+                <button class="btn btn-primary" id="connectWalletBtn" onclick="connectWallet()">
+                    Connect Wallet
+                </button>
+            </div>
+            <div class="session-info hidden" id="sessionInfo">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div class="input-label">Session ID</div>
+                        <div class="session-id" id="sessionId">-</div>
+                    </div>
+                    <div>
+                        <div class="input-label">Wallet Address</div>
+                        <div class="wallet-address" id="walletAddress">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="grid">
+            <!-- API Endpoints -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title">📡 API Endpoints</div>
+                        <div class="card-subtitle">Click to test each endpoint</div>
+                    </div>
+                </div>
+                
+                <div class="endpoint-list">
+                    <div class="endpoint-item" onclick="testEndpoint('health')">
+                        <span class="method method-get">GET</span>
+                        <span class="endpoint-path">/global/health</span>
+                    </div>
+                    <div class="endpoint-item" onclick="testEndpoint('session')">
+                        <span class="method method-post">POST</span>
+                        <span class="endpoint-path">/session</span>
+                    </div>
+                    <div class="endpoint-item" onclick="testEndpoint('message')">
+                        <span class="method method-post">POST</span>
+                        <span class="endpoint-path">/session/:id/message</span>
+                    </div>
+                    <div class="endpoint-item" onclick="testEndpoint('async')">
+                        <span class="method method-post">POST</span>
+                        <span class="endpoint-path">/session/:id/prompt_async</span>
+                    </div>
+                    <div class="endpoint-item" onclick="startEventStream()">
+                        <span class="method method-get">GET</span>
+                        <span class="endpoint-path">/event (SSE)</span>
+                    </div>
+                </div>
+                
+                <!-- Message Input -->
+                <div id="messageSection" class="hidden" style="margin-top: 1rem;">
+                    <div class="input-group">
+                        <label class="input-label">Model</label>
+                        <select id="modelSelect">
+                            <option value="anthropic/claude-opus-4-6">Claude Opus 4.6</option>
+                            <option value="openai/gpt-5.3-codex">GPT-5.3 Codex</option>
+                            <option value="opencode/big-pickle">Big Pickle (OpenCode)</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label">Message</label>
+                        <textarea id="messageInput" placeholder="Type your message here...">Hello! What can you help me with?</textarea>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-primary" onclick="sendMessage()">Send Message (Sync)</button>
+                        <button class="btn btn-secondary" onclick="sendMessageAsync()">Send Async</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Request/Response Log -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-title">📜 Request Log</div>
+                        <div class="card-subtitle" id="logCount">0 requests</div>
+                    </div>
+                    <button class="btn btn-secondary" onclick="clearLog()">Clear</button>
+                </div>
+                <div class="log-container" id="logContainer">
+                    <div class="log-entry">
+                        <div class="log-time">Ready to make requests...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- SSE Events -->
+        <div class="card" style="margin-top: 1.5rem;" id="eventsSection">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">⚡ Server-Sent Events</div>
+                    <div class="card-subtitle">Real-time updates from OpenCode server</div>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-secondary" id="startSSEBtn" onclick="startEventStream()">Start Stream</button>
+                    <button class="btn btn-secondary" onclick="stopEventStream()">Stop</button>
+                </div>
+            </div>
+            <div class="events-list" id="eventsList">
+                <div class="event-item" style="color: var(--text-secondary);">Click "Start Stream" to receive events...</div>
+            </div>
+        </div>
+        
+        <!-- Developer Guide -->
+        <div class="card" style="margin-top: 1.5rem;">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">📖 Developer Guide</div>
+                    <div class="card-subtitle">How to use the PermawebOS Agent API</div>
+                </div>
+            </div>
+            
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('quickstart')">Quick Start</button>
+                <button class="tab" onclick="showTab('sessions')">Sessions</button>
+                <button class="tab" onclick="showTab('messages')">Messages</button>
+                <button class="tab" onclick="showTab('events')">Events</button>
+            </div>
+            
+            <div id="tab-quickstart">
+                <div class="code-block">
+                    <code>// 1. Create a session
+const session = await fetch('http://localhost:4096/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'My Session' })
+}).then(r => r.json());
+
+// 2. Send a message (sync - waits for response)
+const response = await fetch(`http://localhost:4096/session/${session.id}/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        parts: [{ type: 'text', text: 'Hello!' }],
+        model: 'anthropic/claude-opus-4-6'
+    })
+}).then(r => r.json());
+
+// 3. Or send async and listen for events
+const es = new EventSource('http://localhost:4096/event');
+es.onmessage = (e) => console.log(JSON.parse(e.data));</code>
+                </div>
+            </div>
+            
+            <div id="tab-sessions" class="hidden">
+                <h4 style="margin-bottom: 0.5rem;">Session Endpoints</h4>
+                <div class="code-block">
+                    <code>POST /session
+Body: { "title": "My Session", "parentID": "optional" }
+Response: { "id": "ses_xxx", "title": "My Session", ... }
+
+GET /session
+Response: [{ "id": "ses_xxx", ... }]
+
+GET /session/:id
+Response: { "id": "ses_xxx", "title": "...", ... }
+
+DELETE /session/:id
+Response: true</code>
+                </div>
+            </div>
+            
+            <div id="tab-messages" class="hidden">
+                <h4 style="margin-bottom: 0.5rem;">Message Endpoints</h4>
+                <div class="code-block">
+                    <code>POST /session/:id/message (Sync - waits for response)
+Body: {
+    "parts": [{ "type": "text", "text": "Hello!" }],
+    "model": "anthropic/claude-opus-4-6",
+    "agent": "optional"
+}
+Response: { "info": {...}, "parts": [...] }
+
+POST /session/:id/prompt_async (Async - no wait)
+Body: Same as /message
+Response: 204 No Content
+
+GET /session/:id/message
+Response: [{ "info": {...}, "parts": [...] }]</code>
+                </div>
+            </div>
+            
+            <div id="tab-events" class="hidden">
+                <h4 style="margin-bottom: 0.5rem;">Server-Sent Events</h4>
+                <div class="code-block">
+                    <code>GET /event
+Response: SSE stream
+
+Event Types:
+- server.connected - Initial connection
+- session.updated - Session state changed
+- message.updated - New message part
+- message.part.updated - Part streaming
+- file.edited - File was modified
+- command.executed - Command ran
+
+// Listen for events
+const es = new EventSource('/event');
+es.addEventListener('message.updated', (e) => {
+    const data = JSON.parse(e.data);
+    console.log('Message:', data);
+});</code>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Configuration
+        const API_BASE = 'http://localhost:4096';
+        let currentSession = null;
+        let eventSource = null;
+        let requestCount = 0;
+        
+        // Wallet Connection
+        async function connectWallet() {
+            const btn = document.getElementById('connectWalletBtn');
+            btn.disabled = true;
+            btn.textContent = 'Connecting...';
+            
+            try {
+                // Check for Arweave wallet
+                if (window.arweaveWallet) {
+                    await window.arweaveWallet.connect(['ACCESS_ADDRESS', 'SIGN_TRANSACTION']);
+                    const address = await window.arweaveWallet.getActiveAddress();
+                    document.getElementById('walletAddress').textContent = address.slice(0, 8) + '...' + address.slice(-8);
+                    
+                    // Create session
+                    await createSession();
+                    
+                    document.getElementById('sessionInfo').classList.remove('hidden');
+                    btn.textContent = 'Connected ✓';
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-secondary');
+                    document.getElementById('statusDot').classList.add('connected');
+                    document.getElementById('statusText').textContent = 'Connected';
+                } else {
+                    // Fallback: create session without wallet
+                    await createSession();
+                    document.getElementById('sessionInfo').classList.remove('hidden');
+                    btn.textContent = 'Session Created';
+                    document.getElementById('statusDot').classList.add('connected');
+                    document.getElementById('statusText').textContent = 'Connected';
+                }
+            } catch (error) {
+                console.error('Connection error:', error);
+                await createSession();
+                document.getElementById('sessionInfo').classList.remove('hidden');
+                btn.textContent = 'Session Created';
+                document.getElementById('statusDot').classList.add('connected');
+                document.getElementById('statusText').textContent = 'Connected';
+            }
+        }
+        
+        // Create Session
+        async function createSession() {
+            logRequest('POST', '/session', { title: 'PermawebOS Demo' });
+            
+            const response = await fetch(`${API_BASE}/session`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title: 'PermawebOS Demo' })
+            });
+            
+            const data = await response.json();
+            currentSession = data;
+            document.getElementById('sessionId').textContent = data.id;
+            document.getElementById('messageSection').classList.remove('hidden');
+            
+            logResponse('Session created', data);
+            return data;
+        }
+        
+        // Test Endpoints
+        async function testEndpoint(type) {
+            switch (type) {
+                case 'health':
+                    await testHealth();
+                    break;
+                case 'session':
+                    if (!currentSession) await createSession();
+                    else await getSession();
+                    break;
+                case 'message':
+                    document.getElementById('messageInput').focus();
+                    break;
+                case 'async':
+                    document.getElementById('messageInput').focus();
+                    break;
+            }
+        }
+        
+        async function testHealth() {
+            logRequest('GET', '/global/health');
+            const response = await fetch(`${API_BASE}/global/health`);
+            const data = await response.json();
+            logResponse('Health check', data);
+        }
+        
+        async function getSession() {
+            if (!currentSession) return;
+            logRequest('GET', `/session/${currentSession.id}`);
+            const response = await fetch(`${API_BASE}/session/${currentSession.id}`);
+            const data = await response.json();
+            logResponse('Session info', data);
+        }
+        
+        // Send Message
+        async function sendMessage() {
+            if (!currentSession) {
+                alert('Please connect/create a session first');
+                return;
+            }
+            
+            const message = document.getElementById('messageInput').value;
+            const model = document.getElementById('modelSelect').value;
+            
+            logRequest('POST', `/session/${currentSession.id}/message`, { message, model });
+            
+            try {
+                const response = await fetch(`${API_BASE}/session/${currentSession.id}/message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        parts: [{ type: 'text', text: message }],
+                        model: model
+                    })
+                });
+                
+                const data = await response.json();
+                logResponse('Message response', data);
+            } catch (error) {
+                logError('Failed to send message: ' + error.message);
+            }
+        }
+        
+        async function sendMessageAsync() {
+            if (!currentSession) {
+                alert('Please connect/create a session first');
+                return;
+            }
+            
+            const message = document.getElementById('messageInput').value;
+            const model = document.getElementById('modelSelect').value;
+            
+            logRequest('POST', `/session/${currentSession.id}/prompt_async`, { message, model });
+            
+            try {
+                await fetch(`${API_BASE}/session/${currentSession.id}/prompt_async`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        parts: [{ type: 'text', text: message }],
+                        model: model
+                    })
+                });
+                
+                logResponse('Async message sent (check SSE for response)', { status: 'queued' });
+            } catch (error) {
+                logError('Failed to send async message: ' + error.message);
+            }
+        }
+        
+        // Event Stream (SSE)
+        function startEventStream() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            const eventsList = document.getElementById('eventsList');
+            eventsList.innerHTML = '';
+            
+            eventSource = new EventSource(`${API_BASE}/event`);
+            
+            eventSource.onopen = () => {
+                addEvent('connected', 'SSE connection established');
+            };
+            
+            eventSource.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    addEvent(data.type || 'event', data);
+                } catch {
+                    addEvent('raw', e.data);
+                }
+            };
+            
+            eventSource.onerror = (e) => {
+                addEvent('error', 'SSE connection error');
+            };
+            
+            document.getElementById('startSSEBtn').disabled = true;
+            document.getElementById('startSSEBtn').textContent = 'Streaming...';
+        }
+        
+        function stopEventStream() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            document.getElementById('startSSEBtn').disabled = false;
+            document.getElementById('startSSEBtn').textContent = 'Start Stream';
+        }
+        
+        function addEvent(type, data) {
+            const eventsList = document.getElementById('eventsList');
+            const eventItem = document.createElement('div');
+            eventItem.className = 'event-item';
+            eventItem.innerHTML = `<strong>${type}</strong>: <code>${typeof data === 'object' ? JSON.stringify(data, null, 2).slice(0, 200) : data}</code>`;
+            eventsList.insertBefore(eventItem, eventsList.firstChild);
+        }
+        
+        // Logging
+        function logRequest(method, path, data) {
+            requestCount++;
+            document.getElementById('logCount').textContent = `${requestCount} requests`;
+            
+            const logContainer = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry request';
+            entry.innerHTML = `
+                <div class="log-time">${new Date().toLocaleTimeString()}</div>
+                <div><span class="log-method">${method}</span> ${path}</div>
+                ${data ? `<pre>${JSON.stringify(data, null, 2)}</pre>` : ''}
+            `;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function logResponse(title, data) {
+            const logContainer = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry response';
+            entry.innerHTML = `
+                <div class="log-time">${new Date().toLocaleTimeString()}</div>
+                <div><strong>${title}</strong></div>
+                <pre>${JSON.stringify(data, null, 2)}</pre>
+            `;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function logError(message) {
+            const logContainer = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry error';
+            entry.innerHTML = `
+                <div class="log-time">${new Date().toLocaleTimeString()}</div>
+                <div><strong>Error:</strong> ${message}</div>
+            `;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '<div class="log-entry"><div class="log-time">Log cleared</div></div>';
+            requestCount = 0;
+            document.getElementById('logCount').textContent = '0 requests';
+        }
+        
+        // Tabs
+        function showTab(tabId) {
+            document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('[id^="tab-"]').forEach(t => t.classList.add('hidden'));
+            
+            event.target.classList.add('active');
+            document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
