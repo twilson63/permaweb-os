@@ -8,7 +8,11 @@ metadata:
     app.kubernetes.io/part-of: web-os
     pod-id: "{{POD_ID}}"
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    # Support WebSocket upgrades through the auth-proxy
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-set-headers: "Upgrade=$http_upgrade;Connection=upgrade"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
   ingressClassName: nginx
   tls:
@@ -19,24 +23,14 @@ spec:
     - host: {{POD_ID}}.{{BASE_DOMAIN}}
       http:
         paths:
-          - path: /health
-            pathType: Prefix
-            backend:
-              service:
-                name: pod-{{POD_ID}}
-                port:
-                  name: httpsig-http
-          - path: /verify
-            pathType: Prefix
-            backend:
-              service:
-                name: pod-{{POD_ID}}
-                port:
-                  name: httpsig-http
+          # ALL traffic goes through auth-proxy (port 3001).
+          # Auth-proxy handles authentication and proxies to OpenCode (port 4096).
+          # This ensures /v1/chat/completions and other API routes are properly
+          # authenticated before reaching the OpenCode backend.
           - path: /
             pathType: Prefix
             backend:
               service:
                 name: pod-{{POD_ID}}
                 port:
-                  name: opencode-http
+                  name: auth-http

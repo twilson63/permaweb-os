@@ -7,7 +7,9 @@
 import express from "express";
 import cors from "cors";
 import { randomBytes } from "crypto";
+import http from "http";
 import { Response } from "express";
+import WebSocket, { WebSocketServer } from "ws";
 import {
   buildGitHubAuthorizeUrl,
   exchangeGitHubCodeForToken,
@@ -499,16 +501,148 @@ export const createApp = (
 };
 
 /**
+ * Attaches a WebSocket upgrade handler to an HTTP server.
+ *
+ * Clients connect to `wss://api.permaweb.run/ws?pod=<pod-id>&token=<session-token>`.
+ * The handler validates the session token, resolves the target pod, and proxies
+ * WebSocket frames between the client and the pod's backend.
+ *
+ * @param server - Node HTTP server (from express app.listen or http.createServer).
+ * @param authStore - AuthStore for session token validation.
+ * @param podStore - PodStore for resolving pod IDs to upstream URLs.
+ */
+export function attachWebSocketHandler(
+  server: http.Server,
+  authStore: AuthStore,
+  podStore: PodStore
+): void {
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (req: http.IncomingMessage, socket, head) => {
+    const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+
+    // Only handle /ws path
+    if (url.pathname !== "/ws") {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    const token = url.searchParams.get("token");
+    const podId = url.searchParams.get("pod");
+
+    if (!token || !podId) {
+      socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    // Validate session token
+    const session = authStore.validateSession(token);
+    if (!session) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    // Resolve pod and verify ownership
+    const pod = podStore.get(podId);
+    if (!pod) {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    if (pod.ownerWallet !== session.address) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    // Complete the WebSocket handshake
+    wss.handleUpgrade(req, socket, head, (clientWs) => {
+      activeWebsockets.inc();
+
+      // Resolve pod upstream URL
+      // Pod subdomain: <shortId>.<baseDomain>
+      const baseDomain = process.env.POD_BASE_DOMAIN || "pods.permaweb.run";
+      const shortId = podId.slice(0, 8);
+      const podWsUrl = `ws://${shortId}.${baseDomain}/ws`;
+
+      // Attempt to connect to the pod's WebSocket endpoint
+      let podWs: WebSocket | null = null;
+      try {
+        podWs = new WebSocket(podWsUrl, {
+          headers: {
+            "x-owner-wallet": session.address,
+            "x-session-token": token,
+          },
+        });
+      } catch {
+        clientWs.close(1011, "Failed to connect to pod");
+        activeWebsockets.dec();
+        return;
+      }
+
+      podWs.on("open", () => {
+        // Relay messages from client to pod
+        clientWs.on("message", (data) => {
+          if (podWs && podWs.readyState === WebSocket.OPEN) {
+            podWs.send(data);
+          }
+        });
+
+        // Relay messages from pod to client
+        podWs.on("message", (data) => {
+          if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.send(data);
+          }
+        });
+      });
+
+      podWs.on("error", (err) => {
+        console.error(`Pod WebSocket error for pod ${podId}:`, err.message);
+        clientWs.close(1011, "Pod connection error");
+      });
+
+      podWs.on("close", () => {
+        clientWs.close(1000, "Pod disconnected");
+      });
+
+      clientWs.on("close", () => {
+        activeWebsockets.dec();
+        if (podWs && podWs.readyState === WebSocket.OPEN) {
+          podWs.close();
+        }
+      });
+
+      clientWs.on("error", (err) => {
+        console.error(`Client WebSocket error for pod ${podId}:`, err.message);
+        if (podWs && podWs.readyState === WebSocket.OPEN) {
+          podWs.close();
+        }
+      });
+    });
+  });
+}
+
+/**
  * Default application instance used in local runtime mode.
  */
-const app = createApp();
+const defaultAuthStore = new AuthStore();
+const defaultPodStore = new PodStore();
+const app = createApp(defaultPodStore, defaultAuthStore);
 const port = Number(process.env.PORT) || 3000;
 
 /**
  * Starts the HTTP listener when this file is executed directly.
+ * Creates an HTTP server and attaches both Express and WebSocket handlers.
  */
 if (require.main === module) {
-  app.listen(port, () => {
+  const server = http.createServer(app);
+  attachWebSocketHandler(server, defaultAuthStore, defaultPodStore);
+
+  server.listen(port, () => {
     console.log(`api listening on port ${port}`);
   });
 }

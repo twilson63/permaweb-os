@@ -297,6 +297,12 @@ export class PodOrchestrator {
       metadata: {
         name: ingressName,
         namespace: this.namespace,
+        annotations: {
+          // Support WebSocket upgrades through the auth-proxy
+          'nginx.ingress.kubernetes.io/proxy-http-version': '1.1',
+          'nginx.ingress.kubernetes.io/proxy-read-timeout': '3600',
+          'nginx.ingress.kubernetes.io/proxy-send-timeout': '3600',
+        },
       },
       spec: {
         ingressClassName: 'nginx',
@@ -304,6 +310,8 @@ export class PodOrchestrator {
         rules: [{
           host,
           http: {
+            // ALL traffic goes through auth-proxy (auth-http port 3001).
+            // Auth-proxy handles authentication and proxies to OpenCode (port 4096).
             paths: [{
               path: '/',
               pathType: 'Prefix',

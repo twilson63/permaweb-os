@@ -499,11 +499,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   
-  // Check if this is an API request (has Authorization header or Signature, or starts with /api/)
-  const isApiRequest = req.headers['authorization'] || req.headers['signature'] || url.startsWith('/api/');
+  // Check if this is an API/programmatic request:
+  // - Has Authorization or Signature headers (API clients)
+  // - Starts with /api/ (management API)
+  // - Starts with /v1/ (OpenAI-compatible API: /v1/chat/completions, /v1/models, etc.)
+  // - Has JSON content type (programmatic request)
+  const contentType = req.headers['content-type'] || '';
+  const isApiRequest = req.headers['authorization']
+    || req.headers['signature']
+    || url.startsWith('/api/')
+    || url.startsWith('/v1/');
   
   if (isApiRequest) {
-    // API request - proxy to backend (auth handled by backend)
+    // API request - proxy to backend (auth handled by backend or OpenCode)
     await proxyRequest(req, res);
     return;
   }
@@ -520,6 +528,73 @@ const server = http.createServer(async (req, res) => {
   // No valid session - show login page
   res.writeHead(200, { 'Content-Type': 'text/html' });
   res.end(LOGIN_PAGE);
+});
+
+/**
+ * Handle WebSocket upgrade requests.
+ * Proxies WebSocket connections to the backend (OpenCode on port 4096)
+ * after validating authentication.
+ */
+server.on('upgrade', (req: http.IncomingMessage, socket: import('net').Socket, head: Buffer) => {
+  const url = req.url || '/';
+  
+  // Validate session for WebSocket upgrade
+  const session = getSessionFromCookie(req);
+  const hasAuthHeader = !!req.headers['authorization'] || !!req.headers['signature'];
+  
+  if (!session && !hasAuthHeader) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  
+  if (session && session.wallet.toLowerCase() !== OWNER_WALLET.toLowerCase()) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  
+  // Proxy the upgrade request to the backend
+  const proxyReq = http.request({
+    hostname: 'localhost',
+    port: parseInt(BACKEND_PORT),
+    path: url,
+    method: 'GET',
+    headers: {
+      ...req.headers,
+      'x-owner-wallet': OWNER_WALLET,
+      'x-owner-key-id': OWNER_KEY_ID,
+    }
+  });
+  
+  proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+    // Send the upgrade response back to the client
+    let rawHeaders = `HTTP/${proxyRes.httpVersion} ${proxyRes.statusCode} ${proxyRes.statusMessage}\r\n`;
+    for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
+      rawHeaders += `${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}\r\n`;
+    }
+    rawHeaders += '\r\n';
+    
+    socket.write(rawHeaders);
+    if (proxyHead.length > 0) {
+      socket.write(proxyHead);
+    }
+    
+    // Bi-directional pipe
+    proxySocket.pipe(socket);
+    socket.pipe(proxySocket);
+    
+    proxySocket.on('error', () => socket.destroy());
+    socket.on('error', () => proxySocket.destroy());
+  });
+  
+  proxyReq.on('error', (err) => {
+    console.error('WebSocket proxy error:', err);
+    socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+    socket.destroy();
+  });
+  
+  proxyReq.end();
 });
 
 server.listen(parseInt(PORT), () => {
