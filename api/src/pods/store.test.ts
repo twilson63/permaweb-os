@@ -30,12 +30,13 @@ describe("PodStore", () => {
     assert.equal(pod.llmSecretName, "llm-api-keys");
   });
 
-  test("create fails when no secret exists", () => {
+  test("create falls back to global when wallet secret does not exist", () => {
+    // fallbackToGlobal defaults to true, so when wallet secret doesn't exist
+    // it should fall back to the global secret, not throw
     const store = new PodStore({ secretExists: () => false });
 
-    assert.throws(() => {
-      store.create("0xABC123", { name: "alpha" }, llm);
-    }, /No LLM secret available/);
+    const pod = store.create("0xABC123", { name: "alpha" }, llm);
+    assert.equal(pod.llmSecretName, "llm-api-keys");
   });
 
   test("create fails when no secret exists and fallback disabled", () => {
@@ -263,15 +264,15 @@ describe("PodStore async", () => {
     assert.equal(pod.llmSecretName, "llm-api-keys");
   });
 
-  test("createAsync rejects when no secret available", async () => {
+  test("createAsync falls back to global when wallet secret does not exist", async () => {
+    // fallbackToGlobal defaults to true, so when wallet secret doesn't exist
+    // it should fall back to the global secret, not reject
     const store = new PodStore({
       secretExists: async () => false
     });
 
-    await assert.rejects(
-      async () => store.createAsync("0xABC123", {}, llm),
-      /No LLM secret available/
-    );
+    const pod = await store.createAsync("0xABC123", {}, llm);
+    assert.equal(pod.llmSecretName, "llm-api-keys");
   });
 
   test("createAsync with fallback disabled", async () => {
@@ -284,5 +285,34 @@ describe("PodStore async", () => {
       async () => store.createAsync("0xABC123", {}, llm),
       /No LLM secret available/
     );
+  });
+});
+
+describe("PodStore sync fallback safety", () => {
+  test("sync create() falls back to global when secretExists is async (regression)", () => {
+    // This is the exact bug scenario: secretExists returns a Promise (async)
+    // but sync create() is called. Previously, the Promise object was truthy
+    // so the code returned the wallet-specific secret name even though
+    // the secret didn't actually exist in Kubernetes.
+    const store = new PodStore({
+      secretExists: async (_secretName) => {
+        // In production this would be a K8s API call.
+        // The wallet secret does NOT exist.
+        return false;
+      }
+    });
+
+    const pod = store.create("0xABC123", { name: "regression" }, llm);
+    // Must fall back to global, NOT return llm-keys-<hash>
+    assert.equal(pod.llmSecretName, "llm-api-keys");
+  });
+
+  test("sync create() still uses wallet secret when secretExists returns sync true", () => {
+    const store = new PodStore({
+      secretExists: (secretName) => secretName.startsWith("llm-keys-")
+    });
+
+    const pod = store.create("0xABC123", { name: "sync-true" }, llm);
+    assert.match(pod.llmSecretName, /^llm-keys-[a-f0-9]{16}$/);
   });
 });

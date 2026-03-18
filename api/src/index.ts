@@ -351,8 +351,9 @@ export const createApp = (
 
   /**
    * Creates a pod for the authenticated wallet owner.
+   * Uses async path to properly resolve wallet-scoped secrets via K8s API.
    */
-  app.post("/api/pods", requireSession, (req, res: Response<unknown, SessionLocals>) => {
+  app.post("/api/pods", requireSession, async (req, res: Response<unknown, SessionLocals>) => {
     const modelSelection = resolveModelSelection(req.body?.model);
 
     if (!modelSelection) {
@@ -364,7 +365,7 @@ export const createApp = (
     }
 
     try {
-      const pod = store.create(getSessionAddress(res), req.body, modelSelection);
+      const pod = await store.createAsync(getSessionAddress(res), req.body, modelSelection);
       // Update pod metrics
       podsTotal.inc();
       podsByStatus.labels("running").inc();

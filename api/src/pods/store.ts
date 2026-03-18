@@ -174,8 +174,12 @@ export class PodStore {
    * 
    * Priority:
    * 1. Explicitly bound secret (via bindWalletSecret)
-   * 2. Wallet-scoped secret (if exists)
-   * 3. Global secret (if fallback enabled and exists)
+   * 2. Wallet-scoped secret (if exists — synchronous check only)
+   * 3. Global secret (if fallback enabled)
+   * 
+   * IMPORTANT: This method only works correctly when `secretExists` returns
+   * a synchronous boolean. If `secretExists` is async, use
+   * `resolveLlmSecretNameAsync` (via `createAsync`) instead.
    * 
    * @param ownerWallet - Wallet address
    * @returns Kubernetes secret name
@@ -190,12 +194,26 @@ export class PodStore {
       return mappedSecret;
     }
     
-    // Check wallet-scoped secret
+    // Check wallet-scoped secret (synchronous only)
     const walletSecret = this.walletSecretName(normalized);
     const walletExists = this.secretExists(walletSecret);
-    if (walletExists === true || (walletExists as Promise<boolean>)?.then) {
-      // Synchronous check passed, use wallet secret
+
+    // Guard against async secretExists being used with the sync path.
+    // A Promise is truthy but does NOT mean the secret exists — it means
+    // the check hasn't resolved yet. Treat it as "unknown" and fall through
+    // to the global fallback rather than mounting a non-existent secret.
+    if (walletExists === true) {
       return walletSecret;
+    }
+
+    if (
+      walletExists !== false &&
+      typeof (walletExists as Promise<boolean>)?.then === "function"
+    ) {
+      console.warn(
+        `resolveLlmSecretName called with async secretExists for wallet ${normalized}. ` +
+        `Use createAsync() instead. Falling back to global secret.`
+      );
     }
 
     // Fall back to global secret if enabled

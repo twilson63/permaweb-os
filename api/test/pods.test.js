@@ -214,9 +214,10 @@ test("POST /api/pods falls back to global secret for compatibility", async () =>
   }
 });
 
-test("POST /api/pods returns 400 when no wallet or global secret exists", async () => {
+test("POST /api/pods returns 400 when no secret exists and fallback disabled", async () => {
   const podStore = new PodStore({
-    secretExists: () => false
+    secretExists: () => false,
+    fallbackToGlobal: false
   });
   const server = await startTestServer({ podStore });
 
@@ -227,6 +228,25 @@ test("POST /api/pods returns 400 when no wallet or global secret exists", async 
     assert.equal(response.status, 400);
     const payload = await response.json();
     assert.match(payload.error, /No LLM secret available/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/pods falls back to global when wallet secret missing (default)", async () => {
+  const podStore = new PodStore({
+    secretExists: () => false
+    // fallbackToGlobal defaults to true
+  });
+  const server = await startTestServer({ podStore });
+
+  try {
+    const { session } = await createSession(server);
+    const response = await createPod(server, session, "alpha");
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.equal(payload.llmSecretName, "llm-api-keys");
   } finally {
     await server.close();
   }
