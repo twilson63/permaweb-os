@@ -1,304 +1,220 @@
-# Permaweb OS
+# PermawebOS
 
-> A Kubernetes-based platform for running isolated OpenCode pods with HTTPSig authentication. Each user connects with their wallet, spawns a personal pod, and interacts through signed JSON messages.
+> A Kubernetes-based platform for running isolated OpenCode pods with wallet authentication.
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.28+-blue.svg)](https://kubernetes.io/)
 
-## 🌟 Features
+## Overview
 
-- **Wallet Authentication** - Connect with Arweave, RSA, ECDSA, or Ethereum wallets
+PermawebOS provides per-user isolated OpenCode environments with wallet-based authentication. Each user gets their own pod with dedicated resources, and all requests are authenticated via HTTPSig (Arweave) or Ethereum personal_sign.
+
+## Features
+
+- **Multi-wallet Authentication** - Arweave (transaction signing), RSA, ECDSA, Ethereum
+- **Per-User Isolation** - Each user gets their own OpenCode container
 - **HTTPSig Verification** - RFC 9421 compliant request signing
-- **Per-Pod Isolation** - Each user gets their own OpenCode container
-- **Model Selection** - Choose from OpenAI, Anthropic, and more
+- **Model Selection** - OpenAI, Anthropic, OpenRouter, Groq
 - **Usage Tracking** - Token counts and cost calculation per wallet
-- **Subdomain Routing** - Each pod gets `{pod-id}.pods.permaweb.live`
+- **Subdomain Routing** - Each pod at `{pod-id}.pods.permaweb.run`
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         permaweb.live                                   │
-│                      (Kubernetes Cluster)                               │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                    Gateway Service                                │    │
-│  │   - Wallet authentication (Arweave, RSA, ECDSA)                  │    │
-│  │   - Pod lifecycle (create/delete/status)                         │    │
-│  │   - Request routing                                              │    │
-│  └─────────────────────────────────────────────────────────────────┘    │
-│                                    │                                     │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐         │
-│  │   Pod 1    │  │   Pod 2    │  │   Pod 3    │  │   Pod N    │         │
-│  │            │  │            │  │            │  │            │         │
-│  │ HTTPSig    │  │ HTTPSig    │  │ HTTPSig    │  │ HTTPSig    │         │
-│  │ OpenCode   │  │ OpenCode    │  │ OpenCode   │  │ OpenCode    │         │
-│  │ Dev Tools  │  │ Dev Tools   │  │ Dev Tools  │  │ Dev Tools  │         │
-│  │            │  │            │  │            │  │            │         │
-│  │ Wallet: A  │  │ Wallet: B  │  │ Wallet: C  │  │ Wallet: N  │         │
-│  └────────────┘  └────────────┘  └────────────┘  └────────────┘         │
-│                                                                          │
-│  Secret Store: LLM API keys per wallet                                   │
-│  Persistent Storage: Git repos, session data                             │
-│                                                                          │
+│                         api.permaweb.run                                │
+│                      (API Gateway)                                       │
+│   - Wallet authentication                                               │
+│   - Pod lifecycle (create/delete/status)                                │
+│   - Usage tracking                                                       │
 └─────────────────────────────────────────────────────────────────────────┘
+                                    │
+           ┌────────────────────────┼────────────────────────┐
+           │                        │                        │
+    ┌──────┴──────┐          ┌──────┴──────┐          ┌──────┴──────┐
+    │   Pod A     │          │   Pod B     │          │   Pod C     │
+    │             │          │             │          │             │
+    │ auth-proxy  │          │ auth-proxy  │          │ auth-proxy  │
+    │ open-code   │          │ open-code    │          │ open-code    │
+    │             │          │             │          │             │
+    │ Wallet: A   │          │ Wallet: B   │          │ Wallet: C   │
+    └─────────────┘          └─────────────┘          └─────────────┘
+                                    │
+                        ┌───────────┴───────────┐
+                        │   Kubernetes Cluster   │
+                        │   - Secrets management │
+                        │   - Ingress routing    │
+                        │   - Resource limits    │
+                        └───────────────────────┘
 ```
 
-## 📋 Prerequisites
+## Quick Start
+
+### Prerequisites
 
 - [Docker](https://www.docker.com/) 20.10+
-- [Kubectl](https://kubernetes.io/docs/tasks/tools/) 1.28+
-- [Kind](https://kind.sigs.k8s.io/) or [Minikube](https://minikube.sigs.k8s.io/)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) 1.28+
 - [Node.js](https://nodejs.org/) 18+
-- [Bun](https://bun.sh/) (for Hive)
+- [Bun](https://bun.sh/) (for API)
 
-## 🚀 Quick Start
-
-### 1. Clone and Setup
+### Local Development
 
 ```bash
+# Clone the repository
 git clone https://github.com/twilson63/permaweb-os.git
 cd permaweb-os
 
-# Start local Kubernetes cluster
-./scripts/setup.sh
+# Install dependencies
+bun install
+
+# Start local Kubernetes (kind or minikube)
+kind create cluster --name permaweb-os
+kubectl cluster-info
+
+# Deploy
+./scripts/bootstrap-kind.sh
+./scripts/deploy-pod.sh
 ```
 
-### 2. Configure LLM Keys
+### Deploy to Production
 
-```bash
-# Copy the secret template
-cp k8s/llm-api-keys.secret.yaml /tmp/llm-api-keys.secret.yaml
+See [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) for production deployment.
 
-# Edit and add your keys
-# Replace placeholder values with your actual API keys
-```
-
-### 3. Deploy
-
-```bash
-# Deploy a pod
-POD_BASE_DOMAIN=127.0.0.1.nip.io ./scripts/deploy-pod.sh
-```
-
-### 4. Verify
-
-```bash
-# Check cluster status
-kubectl get pods -n web-os
-
-# Check pod health
-curl http://{pod-id}.127.0.0.1.nip.io:3001/health
-```
-
-## 🔑 Authentication Flow
-
-Web OS supports both Ethereum and Arweave wallet authentication.
-
-### Supported Wallets
-
-| Wallet | Address Format | Signature |
-|--------|---------------|----------|
-| Ethereum | `0x` + 40 hex chars | ECDSA secp256k1 (personal_sign) |
-| Arweave | 43-char Base64URL | RSA-PSS-SHA256 |
-
-### Authentication Steps
-
-```
-1. User clicks "Connect Wallet"
-2. Frontend requests nonce from /api/auth/nonce
-3. Frontend detects wallet type (Ethereum or Arweave)
-4. User signs nonce with wallet (appropriate signature method)
-5. Frontend sends signature to /api/auth/verify
-6. Server verifies signature, creates session token
-7. Session token stored in localStorage
-8. Token sent in Authorization: Bearer header
-9. Pods bound to wallet address (ownerWallet field)
-```
-
-### Arweave Signature Example
-
-```javascript
-// Using ArConnect or arweave.app wallet
-const signature = await window.arweaveWallet.signMessage(challenge, {
-  name: 'RSA-PSS',
-  saltLength: 32
-});
-```
-
-### Ethereum Signature Example
-
-```javascript
-// Using ethers.js
-const signature = await signer.signMessage(challenge);
-```
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 permaweb-os/
-├── api/                    # Gateway API (Express)
+├── api/                    # Main API service
 │   ├── src/
-│   │   ├── auth/          # Authentication
-│   │   ├── pods/          # Pod management
-│   │   ├── llm/           # LLM integration
-│   │   └── usage/         # Usage tracking
-│   └── test/              # API tests
-├── frontend/              # Vite + React frontend
-│   └── src/
-│       ├── App.tsx        # Main app
-│       └── api.ts         # API client
-├── opencode-sidecar/      # HTTPSig verification
-│   └── src/
-│       ├── index.ts       # Sidecar server
-│       ├── httpSig.ts     # Signature verification
-│       └── opencode.ts    # OpenCode proxy
-├── images/
-│   └── opencode-base/     # OpenCode container image
-├── k8s/                   # Kubernetes manifests
+│   │   ├── auth/           # Authentication (Arweave, Ethereum)
+│   │   ├── pods/           # Pod orchestration
+│   │   ├── llm/            # LLM secret management
+│   │   └── index.ts        # Entry point
+│   └── Dockerfile
+├── auth-proxy/             # Per-pod authentication proxy
+│   ├── src/index.ts        # Proxy server
+│   └── Dockerfile
+├── k8s/                    # Kubernetes manifests
 │   ├── namespace.yaml
-│   ├── pod-template.yaml
 │   ├── api-deployment.yaml
-│   └── ingress.yaml
-├── scripts/               # Setup scripts
-├── docs/                  # Documentation
-│   └── adr.md            # Architecture Decision Records
-├── ARCHITECTURE.md        # Technical architecture
-├── DESIGN.md             # Design narrative
-├── DEPLOY.md              # Deployment guide
-└── README.md              # This file
+│   ├── pod-template.yaml
+│   └── gateway-ingress.yaml
+├── demo/                   # Demo application
+│   └── index.html          # Agent API demo
+├── docs/                   # Documentation
+│   ├── AGENT-API.md        # Agent API reference
+│   ├── API.md              # REST API reference
+│   ├── INFRASTRUCTURE.md   # Deployment guide
+│   └── ...
+├── scripts/                # Deployment scripts
+│   ├── bootstrap-kind.sh
+│   ├── deploy-pod.sh
+│   └── health-check.sh
+└── tests/                  # Test files
+    └── ...
 ```
 
-## 🧪 Testing
+## Documentation
 
-```bash
-# API tests
-cd api && npm test
+| Document | Description |
+|----------|-------------|
+| [API Reference](docs/API.md) | REST API endpoints |
+| [Agent API](docs/AGENT-API.md) | OpenCode REST API for agents |
+| [Infrastructure Guide](docs/INFRASTRUCTURE.md) | Kubernetes deployment |
+| [CI/CD Plan](docs/CI-CD-PLAN.md) | GitHub Actions pipeline |
+| [Architecture](docs/ARCHITECTURE.md) | System design |
+| [Security Audit](docs/security-audit.md) | Security review |
 
-# Sidecar tests
-cd opencode-sidecar && npm test
+## Authentication
 
-# Run all tests
-npm run test:all
+### Arweave
+
+```javascript
+// 1. Request nonce
+const { nonce, message } = await fetch('/api/auth/nonce', {
+  method: 'POST',
+  body: JSON.stringify({ address: walletAddress })
+}).then(r => r.json());
+
+// 2. Sign with Wander wallet
+const signature = await window.arweaveWallet.sign(message);
+
+// 3. Verify
+const { token } = await fetch('/api/auth/verify', {
+  method: 'POST',
+  body: JSON.stringify({ address, signature, ...txData })
+}).then(r => r.json());
 ```
 
-## 📊 API Endpoints
+### Ethereum
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/auth/nonce` | Get challenge for wallet signature |
-| `POST` | `/api/auth/verify` | Verify signature, get session token |
-| `GET` | `/api/auth/github` | Redirect to GitHub OAuth |
-| `GET` | `/api/auth/github/callback` | GitHub OAuth callback |
-| `GET` | `/api/pods` | List pods for authenticated user |
-| `POST` | `/api/pods` | Create a new pod |
-| `GET` | `/api/pods/:id` | Get pod status |
-| `DELETE` | `/api/pods/:id` | Delete a pod |
-| `GET` | `/api/llm/providers` | List available LLM providers |
-| `GET` | `/api/usage` | Get usage for authenticated user |
+```javascript
+// 1. Request nonce
+const { nonce } = await fetch('/api/auth/nonce', {
+  method: 'POST',
+  body: JSON.stringify({ address, walletType: 'ethereum' })
+}).then(r => r.json());
 
-## 🔧 Configuration
+// 2. Sign with personal_sign
+const signature = await window.ethereum.request({
+  method: 'personal_sign',
+  params: [nonce, address]
+});
 
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | API server port | `3000` |
-| `SESSION_SECRET` | Session signing secret | Required |
-| `GITHUB_CLIENT_ID` | GitHub OAuth client ID | Optional |
-| `GITHUB_CLIENT_SECRET` | GitHub OAuth secret | Optional |
-| `GITHUB_REDIRECT_URI` | GitHub OAuth callback URL | Optional |
-| `OPENCODE_BIN` | Path to OpenCode binary | `/Users/tron/.opencode/bin/opencode` |
-| `USAGE_STORE_PATH` | Path to usage data file | `./data/usage-store.json` |
-
-### Kubernetes Configuration
-
-```yaml
-# Namespace
-kubectl create namespace web-os
-
-# Secrets
-kubectl create secret generic llm-api-keys \
-  --from-literal=openai=sk-... \
-  --from-literal=anthropic=sk-ant-...
-
-# Deploy
-kubectl apply -f k8s/
+// 3. Verify
+const { token } = await fetch('/api/auth/verify', {
+  method: 'POST',
+  body: JSON.stringify({ address, signature, nonce, walletType: 'ethereum' })
+}).then(r => r.json());
 ```
 
-## 📖 Documentation
+## Agent API
 
-- [Architecture](./ARCHITECTURE.md) - Technical architecture details
-- [Design](./DESIGN.md) - Design narrative and rationale
-- [Deployment](./DEPLOY.md) - DigitalOcean deployment guide
-- [ADRs](./docs/adr.md) - Architecture Decision Records
+Each pod exposes an OpenCode REST API at `https://{pod-id}.pods.permaweb.run`:
 
-## 🛣️ Roadmap
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/session` | POST | Create session |
+| `/session/:id/message` | POST | Send message (sync) |
+| `/session/:id/prompt_async` | POST | Send message (async) |
+| `/event` | GET | SSE stream for events |
+| `/file/content` | GET | Read file |
+| `/health` | GET | Health check |
 
-### Phase 0: Foundation ✅
-- Local Kubernetes cluster
-- Service skeletons
-- Base OpenCode image
-- HTTPSig library
-- CI + ADRs
+See [docs/AGENT-API.md](docs/AGENT-API.md) for full documentation.
 
-### Phase 1: Core Pod Infrastructure ✅
-- Pod template + K8s deployment
-- Pod lifecycle API
-- Basic frontend
-- Wildcard ingress
-- Subdomain routing
+## API Endpoints
 
-### Phase 2: Authentication ✅
-- Wallet connection flow
-- HTTPSig request signing
-- Session management
-- Per-pod identity
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/api/auth/nonce` | POST | Get authentication nonce |
+| `/api/auth/verify` | POST | Verify signature, get token |
+| `/api/pods` | POST | Create pod |
+| `/api/pods` | GET | List pods |
+| `/api/pods/:id` | GET | Get pod status |
+| `/api/pods/:id` | DELETE | Delete pod |
 
-### Phase 3: LLM Integration ✅
-- Secret storage for API keys
-- Key injection into pods
-- Model selection UI
-- Usage tracking
-
-### Phase 4: GitHub Integration 🔄
-- OAuth flow
-- Repository browser
-- Clone/edit/push workflow
-- PR creation
-
-### Phase 5: Production ⏳
-- DNS (permaweb.live)
-- TLS certificates
-- Monitoring/logging
-- Rate limiting
-
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing`)
+2. Create a feature branch (`git checkout -b feature/amazing`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing`)
 5. Open a Pull Request
 
-## 📝 License
+## Security
 
-MIT License - see [LICENSE](LICENSE) for details.
+- Never commit API keys or secrets
+- Use `k8s/llm-api-keys.secret.yaml` as a template
+- All authentication uses wallet signatures
+- Each pod is isolated with its own credentials
 
-## 🙏 Acknowledgments
+## License
 
-- [OpenCode](https://github.com/anomalyco/opencode) - The AI agent harness
-- [HTTP Message Signatures](https://datatracker.ietf.org/doc/html/rfc9421) - RFC 9421
-- [Kubernetes](https://kubernetes.io/) - Container orchestration
-- [Arweave](https://arweave.org/) - Permanent storage inspiration
+MIT License - see [LICENSE](LICENSE)
 
-## 📬 Contact
+## Status
 
-- Issues: [GitHub Issues](https://github.com/twilson63/permaweb-os/issues)
-- Discussions: [GitHub Discussions](https://github.com/twilson63/permaweb-os/discussions)
-
----
-
-Built with ❤️ for the decentralized future
+Production deployment at [permaweb.run](https://permaweb.run).

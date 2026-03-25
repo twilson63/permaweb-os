@@ -66,3 +66,43 @@ sessions/
 
 # Usage store with real keys
 api/data/usage-store.json
+# Secret files (never commit)
+*.secret.yaml
+*.secret.yml
+secrets/
+.env.*
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+coverage/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test files in root (keep in tests/)
+/test-*.js
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Cluster-specific files
+.cluster-info
