@@ -192,4 +192,55 @@
 
 ---
 
-**Next Action:** Test new pod creation with PVC (Phase 4)
+## Phase 4: Testing
+
+### Step 4.1: Deploy Updated API ✅
+- [x] Build API image for linux/amd64
+- [x] Push to `registry.digitalocean.com/scout-live/web-os-api:pvc-support`
+- [x] Deploy to cluster with `kubectl set image`
+- [x] Verify rollout successful
+- [x] Health check passes
+- [x] PVC code found in deployed image
+
+### Step 4.2: Test New Pod Creation
+- [ ] Create test pod via API
+- [ ] Verify PVC created
+- [ ] Verify PVC bound
+- [ ] Verify pod mounts PVC
+
+### Step 4.3: Test Data Persistence
+- [ ] Write test file to pod workspace
+- [ ] Delete pod
+- [ ] Recreate pod
+- [ ] Verify data persists
+
+### Step 4.4: Test Migration of Existing Pod
+- [ ] Run migration script on test pod
+- [ ] Verify PVC created
+- [ ] Verify data backed up
+- [ ] Verify new pod uses PVC
+
+---
+
+## Phase 5: Rollout
+
+### Step 5.1: Deploy Updated API
+- [x] Build new API image
+- [x] Push to registry
+- [x] Deploy to cluster
+- [x] Verify health check
+
+### Step 5.2: Migrate Pods
+- [ ] List all pods
+- [ ] Migrate each pod
+- [ ] Verify each migration
+- [ ] Verify all pods running
+
+---
+
+**Current Status:** Phase 4.2 - Ready to test new pod creation
+
+**Cluster Status:**
+- Nodes: 7
+- Running pods: 18
+- New API deployed: `registry.digitalocean.com/scout-live/web-os-api:pvc-support`
