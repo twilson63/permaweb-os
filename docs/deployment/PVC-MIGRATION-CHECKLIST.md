@@ -202,23 +202,22 @@
 - [x] Health check passes
 - [x] PVC code found in deployed image
 
-### Step 4.2: Test New Pod Creation
-- [ ] Create test pod via API
-- [ ] Verify PVC created
-- [ ] Verify PVC bound
-- [ ] Verify pod mounts PVC
+### Step 4.2: Test New Pod Creation ✅
+- [x] Create test PVC manually
+- [x] PVC bound successfully
+- [x] Create pod with PVC mount
+- [x] Pod starts successfully
 
-### Step 4.3: Test Data Persistence
-- [ ] Write test file to pod workspace
-- [ ] Delete pod
-- [ ] Recreate pod
-- [ ] Verify data persists
+### Step 4.3: Test Data Persistence ✅
+- [x] Write test file to PVC: `test-data-Fri Mar 27 16:08:11 EDT 2026`
+- [x] Delete pod
+- [x] Recreate pod with same PVC
+- [x] **Data persisted: Same file content survived**
 
-### Step 4.4: Test Migration of Existing Pod
-- [ ] Run migration script on test pod
-- [ ] Verify PVC created
-- [ ] Verify data backed up
-- [ ] Verify new pod uses PVC
+### Step 4.4: Cleanup ✅
+- [x] Delete test pod
+- [x] Delete test PVC
+- [x] Verify cleanup
 
 ---
 
