@@ -148,4 +148,26 @@
 
 ---
 
-**Next Action:** Create PVC template for user workspaces
+## Phase 2: Complete ✅
+
+### Step 2.1: Create PVC Template ✅
+- [x] Created `k8s/workspace-pvc-template.yaml`
+- [x] Template uses `{{OWNER_WALLET}}` placeholder
+- [x] Validated with `kubectl --dry-run`
+
+### Step 2.2: Update Pod Template ✅
+- [x] Created `k8s/pod-template-with-pvc.yaml`
+- [x] Added PVC volume for `/workspace`
+- [x] Both containers mount workspace
+- [x] Validated with `kubectl --dry-run`
+
+### Step 2.3: Create Migration Script ✅
+- [x] Created `scripts/migrate-pod-to-pvc.sh`
+- [x] Script is executable
+- [x] Syntax validated
+- [x] Handles existing PVCs
+- [x] Creates backup pod for data copy
+
+---
+
+**Next Action:** Update API to create PVCs for new pods (Phase 3)

@@ -1,0 +1,20 @@
+# Workspace PVC Template
+# Creates a persistent volume claim for user workspace data
+# This allows data to persist when pods are scaled down or recreated
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-{{OWNER_WALLET}}
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-workspace
+    app.kubernetes.io/part-of: web-os
+    owner-wallet: "{{OWNER_WALLET}}"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: do-block-storage

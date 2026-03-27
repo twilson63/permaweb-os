@@ -1,0 +1,171 @@
+# Pod Template with PVC for Workspace
+# This version uses a PersistentVolumeClaim for /workspace
+# Data persists across pod restarts and scale-to-zero events
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: user-pod
+  namespace: web-os
+  labels:
+    app.kubernetes.io/name: web-os-user-pod
+    app.kubernetes.io/part-of: web-os
+    pod-id: "{{POD_ID}}"
+    owner-wallet: "{{OWNER_WALLET}}"
+  annotations:
+    # Prometheus scrape annotations for sidecar metrics
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3001"
+    prometheus.io/path: "/metrics"
+    # Owner key ID for HTTPSig verification (public identifier, not the key)
+    owner-key-id: "{{OWNER_KEY_ID}}"
+spec:
+  restartPolicy: Always
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+    # Workspace PVC - persists user data across pod lifecycle
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: workspace-{{OWNER_WALLET}}
+    # Home directory (ephemeral)
+    - name: home-opencode
+      emptyDir: {}
+    # LLM API keys
+    - name: llm-secrets
+      secret:
+        secretName: {{LLM_SECRET_NAME}}
+    # Owner key secret - mounted ONLY in sidecar, NOT in opencode
+    - name: owner-key
+      secret:
+        secretName: {{OWNER_KEY_SECRET_NAME}}
+  containers:
+    - name: opencode
+      image: docker.io/library/web-os-opencode:latest
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 4096
+          name: opencode-http
+      env:
+        # LLM API keys read from mounted secrets
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{LLM_SECRET_NAME}}
+              key: openai
+              optional: true
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{LLM_SECRET_NAME}}
+              key: anthropic
+              optional: true
+        - name: GROQ_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{LLM_SECRET_NAME}}
+              key: groq
+              optional: true
+        - name: OPENROUTER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{LLM_SECRET_NAME}}
+              key: openrouter
+              optional: true
+        # Model selection passed at request time via --model flag
+      volumeMounts:
+        # Persistent workspace - survives pod restart
+        - name: workspace
+          mountPath: /workspace
+        # Home directory (ephemeral)
+        - name: home-opencode
+          mountPath: /home/opencode
+        - name: llm-secrets
+          mountPath: /secrets/llm
+          readOnly: true
+        # NOTE: opencode has NO access to owner-key volume
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: false
+        capabilities:
+          drop:
+            - ALL
+      readinessProbe:
+        tcpSocket:
+          port: 4096
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      livenessProbe:
+        tcpSocket:
+          port: 4096
+        initialDelaySeconds: 15
+        periodSeconds: 20
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 2Gi
+    - name: httpsig-sidecar
+      image: docker.io/library/web-os-opencode-sidecar:latest
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 3001
+          name: httpsig-http
+      env:
+        - name: PORT
+          value: "3001"
+        # Key ID from pod annotation (public identifier)
+        - name: OWNER_KEY_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['owner-key-id']
+        # Path to public key file (mounted from secret)
+        - name: OWNER_PUBLIC_KEY_PEM_FILE
+          value: /secrets/owner/public-key.pem
+        # Workspace path for sidecar
+        - name: WORKSPACE_PATH
+          value: /workspace
+      volumeMounts:
+        # Persistent workspace - for auth-proxy to read/write
+        - name: workspace
+          mountPath: /workspace
+          readOnly: false
+        - name: owner-key
+          mountPath: /secrets/owner
+          readOnly: true
+        # NOTE: sidecar has NO access to llm-secrets
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: false
+        capabilities:
+          drop:
+            - ALL
+      readinessProbe:
+        httpGet:
+          path: /health
+          port: 3001
+        initialDelaySeconds: 5
+        periodSeconds: 10
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 3001
+        initialDelaySeconds: 15
+        periodSeconds: 20
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
