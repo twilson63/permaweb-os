@@ -5,6 +5,8 @@
 
 import { getKubernetesClient, isKubernetesAvailable } from '../kubernetes/client';
 import { PodLlmConfig } from './types';
+import { normalizeWalletAddress } from './secret-naming';
+import { createHash } from 'crypto';
 
 /**
  * Configuration for creating a new pod.
@@ -18,6 +20,7 @@ export interface CreatePodOptions {
   ownerKeySecretName: string;
   ownerPublicKey: string;  // Public key PEM for HTTPSig verification
   model: string;
+  pvcName?: string;  // Optional: PVC name for workspace (auto-generated if not provided)
 }
 
 /**
@@ -57,7 +60,121 @@ export class PodOrchestrator {
   }
 
   /**
-   * Creates all Kubernetes resources for a pod (Pod, Service, Ingress).
+   * Gets the PVC name for a wallet.
+   * Uses SHA256 hash truncated to 16 chars for Kubernetes compatibility.
+   */
+  private getWorkspacePvcName(ownerWallet: string): string {
+    const normalized = normalizeWalletAddress(ownerWallet);
+    const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+    return `workspace-${hash}`;
+  }
+
+  /**
+   * Creates a PersistentVolumeClaim for user workspace data.
+   * This allows data to persist across pod restarts and scale-to-zero.
+   */
+  async createWorkspacePvc(ownerWallet: string): Promise<string> {
+    if (!isKubernetesAvailable()) {
+      console.log('Kubernetes not available, skipping PVC creation');
+      return this.getWorkspacePvcName(ownerWallet);
+    }
+
+    const { core } = getKubernetesClient();
+    const pvcName = this.getWorkspacePvcName(ownerWallet);
+
+    // Check if PVC already exists
+    try {
+      await core.readNamespacedPersistentVolumeClaim({ namespace: this.namespace, name: pvcName });
+      console.log(`PVC ${pvcName} already exists, skipping creation`);
+      return pvcName;
+    } catch {
+      // PVC doesn't exist, create it
+    }
+
+    const pvc = {
+      apiVersion: 'v1',
+      kind: 'PersistentVolumeClaim',
+      metadata: {
+        name: pvcName,
+        namespace: this.namespace,
+        labels: {
+          'app.kubernetes.io/name': 'web-os-workspace',
+          'app.kubernetes.io/part-of': 'web-os',
+          'owner-wallet': ownerWallet,
+        },
+      },
+      spec: {
+        accessModes: ['ReadWriteOnce'],
+        resources: {
+          requests: {
+            storage: '1Gi',
+          },
+        },
+        storageClassName: 'do-block-storage',
+      },
+    };
+
+    await core.createNamespacedPersistentVolumeClaim({ namespace: this.namespace, body: pvc });
+    console.log(`Created PVC ${pvcName} for owner ${ownerWallet}`);
+
+    // Wait for PVC to bind
+    const bound = await this.waitForPvcBound(pvcName, 60000);
+    if (!bound) {
+      throw new Error(`PVC ${pvcName} did not bind within 60s`);
+    }
+
+    return pvcName;
+  }
+
+  /**
+   * Waits for a PVC to be bound.
+   */
+  private async waitForPvcBound(pvcName: string, timeoutMs: number = 60000): Promise<boolean> {
+    if (!isKubernetesAvailable()) {
+      return true;
+    }
+
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const { core } = getKubernetesClient();
+        const pvc = await core.readNamespacedPersistentVolumeClaim({ namespace: this.namespace, name: pvcName });
+        
+        if (pvc.status?.phase === 'Bound') {
+          return true;
+        }
+      } catch {
+        // Continue waiting
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    return false;
+  }
+
+  /**
+   * Checks if a workspace PVC exists for a wallet.
+   */
+  async workspacePvcExists(ownerWallet: string): Promise<boolean> {
+    if (!isKubernetesAvailable()) {
+      return false;
+    }
+
+    const pvcName = this.getWorkspacePvcName(ownerWallet);
+    
+    try {
+      const { core } = getKubernetesClient();
+      await core.readNamespacedPersistentVolumeClaim({ namespace: this.namespace, name: pvcName });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Creates all Kubernetes resources for a pod (PVC, Pod, Service, Ingress).
    */
   async createAll(opts: CreatePodOptions): Promise<CreatePodResult> {
     const podName = `pod-${opts.podId.slice(0, 8)}`;
@@ -77,11 +194,14 @@ export class PodOrchestrator {
     }
 
     try {
+      // Create workspace PVC (idempotent - skips if exists)
+      const pvcName = await this.createWorkspacePvc(opts.ownerWallet);
+
       // Create owner-key secret first (required for pod to mount)
       await this.createOwnerKeySecret(opts);
 
-      // Create Pod
-      await this.createPod(opts);
+      // Create Pod (with PVC mounted)
+      await this.createPod({ ...opts, pvcName });
 
       // Create Service
       await this.createService(opts.podId);
@@ -114,7 +234,7 @@ export class PodOrchestrator {
   }
 
   /**
-   * Creates a Kubernetes Pod.
+   * Creates a Kubernetes Pod with PVC for workspace.
    */
   async createPod(opts: CreatePodOptions): Promise<void> {
     if (!isKubernetesAvailable()) {
@@ -124,6 +244,7 @@ export class PodOrchestrator {
 
     const { core } = getKubernetesClient();
     const podName = `pod-${opts.podId.slice(0, 8)}`;
+    const pvcName = opts.pvcName || this.getWorkspacePvcName(opts.ownerWallet);
 
     const pod = {
       apiVersion: 'v1',
@@ -153,8 +274,13 @@ export class PodOrchestrator {
           seccompProfile: { type: 'RuntimeDefault' },
         },
         volumes: [
+          // Persistent workspace - survives pod restart
+          { name: 'workspace', persistentVolumeClaim: { claimName: pvcName } },
+          // Home directory (ephemeral)
           { name: 'home-opencode', emptyDir: {} },
+          // LLM API keys
           { name: 'llm-secrets', secret: { secretName: opts.llmSecretName } },
+          // Owner key for HTTPSig verification (sidecar only)
           { name: 'owner-key', secret: { secretName: opts.ownerKeySecretName } },
         ],
         containers: [
@@ -170,6 +296,7 @@ export class PodOrchestrator {
               { name: 'GROQ_API_KEY', valueFrom: { secretKeyRef: { name: opts.llmSecretName, key: 'groq', optional: true } } },
             ],
             volumeMounts: [
+              { name: 'workspace', mountPath: '/workspace' },
               { name: 'home-opencode', mountPath: '/home/opencode' },
               { name: 'llm-secrets', mountPath: '/secrets/llm', readOnly: true },
             ],
@@ -190,8 +317,10 @@ export class PodOrchestrator {
               { name: 'OWNER_KEY_ID', value: opts.ownerKeyId },
               { name: 'OWNER_PUBLIC_KEY_PEM_FILE', value: '/secrets/owner/public-key.pem' },
               { name: 'DOMAIN', value: this.baseDomain },
+              { name: 'WORKSPACE_PATH', value: '/workspace' },
             ],
             volumeMounts: [
+              { name: 'workspace', mountPath: '/workspace', readOnly: false },
               { name: 'owner-key', mountPath: '/secrets/owner', readOnly: true },
             ],
             resources: {
@@ -356,8 +485,9 @@ export class PodOrchestrator {
 
   /**
    * Deletes a pod and its associated resources.
+   * Optionally preserves the PVC to keep user data.
    */
-  async deletePod(podId: string): Promise<void> {
+  async deletePod(podId: string, opts?: { preserveData?: boolean }): Promise<void> {
     if (!isKubernetesAvailable()) {
       return;
     }
@@ -381,8 +511,43 @@ export class PodOrchestrator {
       try {
         await core.deleteNamespacedPod({ name: podName, namespace: this.namespace });
       } catch { /* ignore */ }
+
+      // PVC is preserved by default (preserveData: true)
+      // Only delete PVC if explicitly requested (preserveData: false)
+      // This ensures user data survives pod deletion/restart
+      if (opts?.preserveData === false) {
+        try {
+          // Note: We need the ownerWallet to derive the PVC name
+          // For now, we don't delete PVC in deletePod
+          // Use deleteAllForWallet to clean up everything including PVC
+          console.log(`PVC preservation enabled, not deleting PVC for pod ${podName}`);
+        } catch { /* ignore */ }
+      }
     } catch (error: unknown) {
       console.error('Failed to delete pod:', error);
+    }
+  }
+
+  /**
+   * Deletes all resources for a wallet, including the PVC.
+   * Use with caution - this permanently deletes user data.
+   */
+  async deleteAllForWallet(ownerWallet: string, podId: string): Promise<void> {
+    if (!isKubernetesAvailable()) {
+      return;
+    }
+
+    // First delete the pod
+    await this.deletePod(podId, { preserveData: false });
+
+    // Then delete the PVC
+    const pvcName = this.getWorkspacePvcName(ownerWallet);
+    try {
+      const { core } = getKubernetesClient();
+      await core.deleteNamespacedPersistentVolumeClaim({ name: pvcName, namespace: this.namespace });
+      console.log(`Deleted PVC ${pvcName} for wallet ${ownerWallet}`);
+    } catch (error) {
+      console.error(`Failed to delete PVC ${pvcName}:`, error);
     }
   }
 

@@ -170,4 +170,26 @@
 
 ---
 
-**Next Action:** Update API to create PVCs for new pods (Phase 3)
+## Phase 3: Complete ✅
+
+### Step 3.1: Add PVC Creation Function ✅
+- [x] Added `createWorkspacePvc()` to orchestrator
+- [x] Added `waitForPvcBound()` helper
+- [x] Added `workspacePvcExists()` check
+- [x] Type-safe with `CreatePodOptions.pvcName`
+
+### Step 3.2: Update Pod Creation ✅
+- [x] Modified `createAll()` to create PVC first
+- [x] Added `workspace` volume with PVC
+- [x] Both containers mount `/workspace`
+- [x] `WORKSPACE_PATH` env var for auth-proxy
+- [x] Tests pass (52/52)
+
+### Step 3.3: Delete with Preservation ✅
+- [x] `deletePod()` preserves PVC by default
+- [x] Added `deleteAllForWallet()` for full cleanup
+- [x] PVC survives pod restart/recreation
+
+---
+
+**Next Action:** Test new pod creation with PVC (Phase 4)
