@@ -286,7 +286,7 @@ export class PodOrchestrator {
         containers: [
           {
             name: 'opencode',
-            image: 'registry.digitalocean.com/scout-live/web-os-opencode:latest',
+            image: 'registry.digitalocean.com/scout-live/web-os-opencode:amd64',
             imagePullPolicy: 'Always',
             ports: [{ containerPort: 4096, name: 'opencode-http' }],
             env: [
@@ -294,6 +294,8 @@ export class PodOrchestrator {
               { name: 'ANTHROPIC_API_KEY', valueFrom: { secretKeyRef: { name: opts.llmSecretName, key: 'anthropic', optional: true } } },
               { name: 'OPENROUTER_API_KEY', valueFrom: { secretKeyRef: { name: opts.llmSecretName, key: 'openrouter', optional: true } } },
               { name: 'GROQ_API_KEY', valueFrom: { secretKeyRef: { name: opts.llmSecretName, key: 'groq', optional: true } } },
+              // Default model - free tier option
+              { name: 'OPENCODE_MODEL', value: 'opencode/big-pickle' },
             ],
             volumeMounts: [
               { name: 'workspace', mountPath: '/workspace' },
@@ -307,7 +309,7 @@ export class PodOrchestrator {
           },
           {
             name: 'auth-proxy',
-            image: 'registry.digitalocean.com/scout-live/web-os-auth-proxy:latest',
+            image: 'registry.digitalocean.com/scout-live/web-os-auth-proxy:amd64',
             imagePullPolicy: 'Always',
             ports: [{ containerPort: 3001, name: 'auth-http' }],
             env: [
@@ -435,7 +437,7 @@ export class PodOrchestrator {
       },
       spec: {
         ingressClassName: 'nginx',
-        tls: [{ hosts: [host], secretName: 'pods-wildcard-tls' }],
+        tls: [{ hosts: [host], secretName: 'permaweb-pods-tls' }],
         rules: [{
           host,
           http: {

@@ -22,8 +22,8 @@ RUN apk add --no-cache \
 # Create user and set permissions
 RUN addgroup -S opencode && adduser -S -G opencode -h /home/opencode opencode
 
-COPY entrypoint.sh /usr/local/bin/opencode-entrypoint
-RUN chmod +x /usr/local/bin/opencode-entrypoint
+# Copy entrypoint with proper permissions
+COPY --chmod=755 entrypoint.sh /usr/local/bin/opencode-entrypoint
 
 USER opencode
 WORKDIR /workspace

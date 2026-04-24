@@ -70,6 +70,39 @@ const DOMAIN = process.env.DOMAIN || 'pods.permaweb.run';
 
 import { readFileSync, existsSync } from 'fs';
 
+// CORS configuration
+const CORS_ORIGINS = process.env.CORS_ORIGINS || '*';
+const ALLOWED_ORIGINS = CORS_ORIGINS === '*' ? null : CORS_ORIGINS.split(',').map(o => o.trim());
+
+function addCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const origin = req.headers.origin || '';
+  
+  // Check if origin is allowed
+  if (!origin) {
+    // No origin header - likely same-origin or non-browser request
+    return;
+  }
+  
+  if (ALLOWED_ORIGINS === null || ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Signature, Signature-Input, Date, X-Wallet-Type');
+    res.setHeader('Access-Control-Max-Age', '86400');
+  }
+}
+
+// Handle CORS preflight requests
+function handleCorsPreflight(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (req.method === 'OPTIONS') {
+    addCorsHeaders(req, res);
+    res.writeHead(204);
+    res.end();
+    return true;
+  }
+  return false;
+}
+
 // Load owner public key
 let ownerPublicKeyPem = '';
 try {
@@ -438,6 +471,14 @@ async function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse)
 const server = http.createServer(async (req, res) => {
   const url = req.url || '/';
   
+  // Handle CORS preflight for all routes
+  if (handleCorsPreflight(req, res)) {
+    return;
+  }
+  
+  // Add CORS headers to all responses
+  addCorsHeaders(req, res);
+  
   // Health check endpoint
   if (url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -597,7 +638,7 @@ server.on('upgrade', (req: http.IncomingMessage, socket: import('net').Socket, h
   proxyReq.end();
 });
 
-server.listen(parseInt(PORT), () => {
+server.listen(parseInt(PORT), '0.0.0.0', () => {
   console.log(`Auth proxy listening on port ${PORT}`);
   console.log(`Owner wallet: ${OWNER_WALLET}`);
   console.log(`Backend: http://localhost:${BACKEND_PORT}`);
