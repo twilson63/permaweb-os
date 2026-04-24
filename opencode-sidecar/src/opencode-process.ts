@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 
 const OPENCODE_BIN = process.env.OPENCODE_BIN || "/Users/tron/.opencode/bin/opencode";
-const OPENCODE_MODEL = process.env.OPENCODE_MODEL || "openai/gpt-4o-mini";
+const OPENCODE_MODEL = process.env.OPENCODE_MODEL || "opencode/big-pickle";
 
 export interface OpenCodeRequest {
   content: string;

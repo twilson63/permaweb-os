@@ -6,6 +6,8 @@
  * Mapping from full model IDs to provider slugs.
  */
 const MODEL_PROVIDER_MAP: Record<string, string> = {
+  // OpenCode
+  "opencode/big-pickle": "opencode",
   // OpenAI
   "openai/gpt-4.1-mini": "openai",
   "openai/gpt-4o-mini": "openai",
@@ -31,6 +33,8 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
  * Cost map in USD per 1K tokens, split by input/output token classes.
  */
 const MODEL_TOKEN_COST_USD: Record<string, { inputPer1K: number; outputPer1K: number }> = {
+  // OpenCode
+  "opencode/big-pickle": { inputPer1K: 0, outputPer1K: 0 },
   // OpenAI
   "openai/gpt-4.1-mini": { inputPer1K: 0.0004, outputPer1K: 0.0016 },
   "openai/gpt-4o-mini": { inputPer1K: 0.00015, outputPer1K: 0.0006 },
@@ -55,7 +59,7 @@ const MODEL_TOKEN_COST_USD: Record<string, { inputPer1K: number; outputPer1K: nu
 /**
  * Safe fallback when no valid default model is configured.
  */
-const FALLBACK_MODEL = "openai/gpt-4o-mini";
+const FALLBACK_MODEL = "opencode/big-pickle";
 
 /**
  * Resolves the default model from environment configuration.
