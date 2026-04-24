@@ -31,6 +31,7 @@ interface WindowWithEthereum extends Window {
  * Static list of LLM models offered in the create pod dialog.
  */
 const SUPPORTED_MODELS = [
+  "opencode/big-pickle",
   "openai/gpt-4.1-mini",
   "openai/gpt-4o-mini",
   "anthropic/claude-3-5-haiku",
