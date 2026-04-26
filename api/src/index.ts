@@ -21,6 +21,7 @@ import { listSupportedModels, resolveModelSelection } from "./llm/modelRegistry"
 import { LlmSecretStore } from "./llm/secretStore";
 import { registerLlmRoutes } from "./llm/routes";
 import { PodStore } from "./pods/store";
+import { normalizeWorkspaceSkills } from "./pods/skills";
 import { UsageStore } from "./usage/store";
 import {
   httpMetricsMiddleware,
@@ -365,7 +366,8 @@ export const createApp = (
     }
 
     try {
-      const pod = await store.createAsync(getSessionAddress(res), req.body, modelSelection);
+      const skills = normalizeWorkspaceSkills(req.body?.skills);
+      const pod = await store.createAsync(getSessionAddress(res), { ...req.body, skills }, modelSelection);
       // Update pod metrics
       podsTotal.inc();
       podsByStatus.labels("running").inc();

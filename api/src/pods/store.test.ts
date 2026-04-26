@@ -191,6 +191,29 @@ describe("PodStore", () => {
     assert.match(pod.ownerKeySecretName!, /^owner-key-[a-f0-9]{16}$/);
   });
 
+  test("create stores workspace skill summaries without markdown content", () => {
+    const store = new PodStore({
+      secretExists: () => true
+    });
+
+    const pod = store.create("0xABC123", {
+      name: "skill-pod",
+      skills: [{
+        name: "git-release",
+        description: "Create consistent releases",
+        markdown: "---\nname: git-release\ndescription: Create consistent releases\n---\n\n## Steps",
+        path: "/workspace/.opencode/skills/git-release/SKILL.md"
+      }]
+    }, llm);
+
+    assert.deepEqual(pod.skills, [{
+      name: "git-release",
+      description: "Create consistent releases",
+      path: "/workspace/.opencode/skills/git-release/SKILL.md"
+    }]);
+    assert.equal(JSON.stringify(pod).includes("## Steps"), false);
+  });
+
   test("getOrCreateOwnerKey generates unique keys per wallet", () => {
     const store = new PodStore({
       secretExists: () => true

@@ -4,7 +4,7 @@
  */
 
 import { getKubernetesClient, isKubernetesAvailable } from '../kubernetes/client';
-import { PodLlmConfig } from './types';
+import { PodLlmConfig, WorkspaceSkill } from './types';
 import { normalizeWalletAddress } from './secret-naming';
 import { createHash } from 'crypto';
 
@@ -21,6 +21,8 @@ export interface CreatePodOptions {
   ownerPublicKey: string;  // Public key PEM for HTTPSig verification
   model: string;
   pvcName?: string;  // Optional: PVC name for workspace (auto-generated if not provided)
+  skills?: WorkspaceSkill[];
+  skillsConfigMapName?: string;
 }
 
 /**
@@ -67,6 +69,10 @@ export class PodOrchestrator {
     const normalized = normalizeWalletAddress(ownerWallet);
     const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 16);
     return `workspace-${hash}`;
+  }
+
+  private getWorkspaceSkillsConfigMapName(podId: string): string {
+    return `pod-${podId.slice(0, 8)}-skills`;
   }
 
   /**
@@ -200,8 +206,14 @@ export class PodOrchestrator {
       // Create owner-key secret first (required for pod to mount)
       await this.createOwnerKeySecret(opts);
 
+      const skillsConfigMapName = opts.skills?.length ? this.getWorkspaceSkillsConfigMapName(opts.podId) : undefined;
+
+      if (skillsConfigMapName) {
+        await this.createWorkspaceSkillsConfigMap({ ...opts, skillsConfigMapName });
+      }
+
       // Create Pod (with PVC mounted)
-      await this.createPod({ ...opts, pvcName });
+      await this.createPod({ ...opts, pvcName, skillsConfigMapName });
 
       // Create Service
       await this.createService(opts.podId);
@@ -245,6 +257,42 @@ export class PodOrchestrator {
     const { core } = getKubernetesClient();
     const podName = `pod-${opts.podId.slice(0, 8)}`;
     const pvcName = opts.pvcName || this.getWorkspacePvcName(opts.ownerWallet);
+    const volumes: any[] = [
+      // Persistent workspace - survives pod restart
+      { name: 'workspace', persistentVolumeClaim: { claimName: pvcName } },
+      // Home directory (ephemeral)
+      { name: 'home-opencode', emptyDir: {} },
+      // LLM API keys
+      { name: 'llm-secrets', secret: { secretName: opts.llmSecretName } },
+      // Owner key for HTTPSig verification (sidecar only)
+      { name: 'owner-key', secret: { secretName: opts.ownerKeySecretName } },
+    ];
+    const initContainers: any[] = [];
+
+    if (opts.skillsConfigMapName) {
+      volumes.push({ name: 'workspace-skills', configMap: { name: opts.skillsConfigMapName } });
+      initContainers.push({
+        name: 'install-workspace-skills',
+        image: 'busybox:1.36',
+        command: [
+          'sh',
+          '-c',
+          [
+            'set -eu',
+            'mkdir -p /workspace/.opencode/skills',
+            'for skill_file in /workspace-skills/*.md; do',
+            '  skill_name="$(basename "$skill_file" .md)"',
+            '  mkdir -p "/workspace/.opencode/skills/$skill_name"',
+            '  cp "$skill_file" "/workspace/.opencode/skills/$skill_name/SKILL.md"',
+            'done',
+          ].join('\n'),
+        ],
+        volumeMounts: [
+          { name: 'workspace', mountPath: '/workspace' },
+          { name: 'workspace-skills', mountPath: '/workspace-skills', readOnly: true },
+        ],
+      });
+    }
 
     const pod = {
       apiVersion: 'v1',
@@ -273,16 +321,8 @@ export class PodOrchestrator {
           fsGroup: 1000,
           seccompProfile: { type: 'RuntimeDefault' },
         },
-        volumes: [
-          // Persistent workspace - survives pod restart
-          { name: 'workspace', persistentVolumeClaim: { claimName: pvcName } },
-          // Home directory (ephemeral)
-          { name: 'home-opencode', emptyDir: {} },
-          // LLM API keys
-          { name: 'llm-secrets', secret: { secretName: opts.llmSecretName } },
-          // Owner key for HTTPSig verification (sidecar only)
-          { name: 'owner-key', secret: { secretName: opts.ownerKeySecretName } },
-        ],
+        ...(initContainers.length > 0 && { initContainers }),
+        volumes,
         containers: [
           {
             name: 'opencode',
@@ -333,6 +373,33 @@ export class PodOrchestrator {
     };
 
     await core.createNamespacedPod({ namespace: this.namespace, body: pod });
+  }
+
+  async createWorkspaceSkillsConfigMap(opts: CreatePodOptions & { skillsConfigMapName: string }): Promise<void> {
+    if (!isKubernetesAvailable() || !opts.skills?.length) {
+      return;
+    }
+
+    const { core } = getKubernetesClient();
+    const data = Object.fromEntries(opts.skills.map((skill) => [`${skill.name}.md`, skill.markdown]));
+
+    const configMap = {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: {
+        name: opts.skillsConfigMapName,
+        namespace: this.namespace,
+        labels: {
+          'app.kubernetes.io/name': 'workspace-skills',
+          'app.kubernetes.io/part-of': 'web-os',
+          'pod-id': opts.podId.slice(0, 8),
+          'owner-wallet': opts.ownerWallet,
+        },
+      },
+      data,
+    };
+
+    await core.createNamespacedConfigMap({ namespace: this.namespace, body: configMap });
   }
 
   /**
@@ -505,6 +572,11 @@ export class PodOrchestrator {
       // Delete Service
       try {
         await core.deleteNamespacedService({ name: podName, namespace: this.namespace });
+      } catch { /* ignore */ }
+
+      // Delete workspace skills ConfigMap when present
+      try {
+        await core.deleteNamespacedConfigMap({ name: this.getWorkspaceSkillsConfigMapName(podId), namespace: this.namespace });
       } catch { /* ignore */ }
 
       // Delete Pod

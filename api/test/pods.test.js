@@ -143,6 +143,54 @@ test("POST /api/pods creates a pod and binds owner wallet", async () => {
   }
 });
 
+test("POST /api/pods accepts workspace skills", async () => {
+  const server = await startTestServer();
+
+  try {
+    const { session } = await createSession(server);
+    const response = await createPod(server, session, {
+      name: "skill-workspace",
+      skills: [{
+        name: "git-release",
+        description: "Create consistent releases",
+        markdown: "## Release flow\n\nDraft release notes from merged PRs."
+      }]
+    });
+
+    assert.equal(response.status, 201);
+    const payload = await response.json();
+    assert.deepEqual(payload.skills, [{
+      name: "git-release",
+      description: "Create consistent releases",
+      path: "/workspace/.opencode/skills/git-release/SKILL.md"
+    }]);
+    assert.equal(JSON.stringify(payload).includes("Release flow"), false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("POST /api/pods rejects invalid workspace skill names", async () => {
+  const server = await startTestServer();
+
+  try {
+    const { session } = await createSession(server);
+    const response = await createPod(server, session, {
+      name: "invalid-skill-workspace",
+      skills: [{
+        name: "Bad Skill",
+        markdown: "## Invalid"
+      }]
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json();
+    assert.match(payload.error, /Workspace skill name/);
+  } finally {
+    await server.close();
+  }
+});
+
 test("POST /api/pods binds wallet-scoped LLM secret when available", async () => {
   const podStore = new PodStore({
     secretExists: (secretName) => secretName.startsWith("llm-keys-")
