@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { CreatePodInput, Pod, PodLlmConfig } from "./types";
+import { getPodSkillSummaries } from "./skills";
 import { getWalletSecretName, normalizeWalletAddress } from "./secret-naming";
 import { generateOwnerKeyPair, computeKeyId, getOwnerKeySecretName, OwnerKeyStore } from "./owner-keys";
 import { getPodOrchestrator, PodOrchestrator } from "./orchestrator";
@@ -283,6 +284,8 @@ export class PodStore {
   create(ownerWallet: string, input: CreatePodInput = {}, llm: PodLlmConfig): Pod {
     const id = randomUUID();
     const llmSecretName = this.resolveLlmSecretName(ownerWallet);
+    const workspaceSkills = input.skills || [];
+    const skillSummaries = getPodSkillSummaries(workspaceSkills);
     
     // Get or create owner key for HTTPSig verification
     const { keyId, publicKeyPem, secretName: ownerKeySecretName } = this.getOrCreateOwnerKey(ownerWallet);
@@ -298,6 +301,7 @@ export class PodStore {
       llmSecretName,
       ownerKeyId: keyId,
       ownerKeySecretName,
+      ...(skillSummaries.length > 0 && { skills: skillSummaries }),
     };
 
     this.pods.set(id, pod);
@@ -315,7 +319,8 @@ export class PodStore {
         ownerKeyId: keyId,
         ownerKeySecretName,
         ownerPublicKey: publicKeyPem,
-        model: llm.model
+        model: llm.model,
+        skills: workspaceSkills
       }).then(result => {
         if (result.status === 'failed') {
           console.error('Failed to create Kubernetes pod:', result.message);
@@ -343,6 +348,8 @@ export class PodStore {
   async createAsync(ownerWallet: string, input: CreatePodInput = {}, llm: PodLlmConfig): Promise<Pod> {
     const id = randomUUID();
     const llmSecretName = await this.resolveLlmSecretNameAsync(ownerWallet);
+    const workspaceSkills = input.skills || [];
+    const skillSummaries = getPodSkillSummaries(workspaceSkills);
     
     // Get or create owner key for HTTPSig verification
     const { keyId, publicKeyPem, secretName: ownerKeySecretName } = this.getOrCreateOwnerKey(ownerWallet);
@@ -358,6 +365,7 @@ export class PodStore {
       llmSecretName,
       ownerKeyId: keyId,
       ownerKeySecretName,
+      ...(skillSummaries.length > 0 && { skills: skillSummaries }),
     };
 
     this.pods.set(id, pod);
@@ -375,7 +383,8 @@ export class PodStore {
           ownerKeyId: keyId,
           ownerKeySecretName,
           ownerPublicKey: publicKeyPem,
-          model: llm.model
+          model: llm.model,
+          skills: workspaceSkills
         });
 
         if (result.status === 'failed') {

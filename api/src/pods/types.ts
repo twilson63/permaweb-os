@@ -17,6 +17,25 @@ export interface PodLlmConfig {
 }
 
 /**
+ * Workspace-local OpenCode skill materialized into the pod filesystem.
+ */
+export interface WorkspaceSkill {
+  name: string;
+  description: string;
+  markdown: string;
+  path: string;
+}
+
+/**
+ * Public skill summary returned with pod records.
+ */
+export interface PodSkill {
+  name: string;
+  description: string;
+  path: string;
+}
+
+/**
  * Pod record returned by the API.
  */
 export interface Pod {
@@ -32,6 +51,8 @@ export interface Pod {
   ownerKeyId: string;
   /** Kubernetes secret name containing the owner's public key (mounted only in sidecar) */
   ownerKeySecretName?: string;
+  /** Workspace-local skills available to OpenCode in this pod */
+  skills?: PodSkill[];
 }
 
 /**
@@ -40,4 +61,5 @@ export interface Pod {
 export interface CreatePodInput {
   name?: string;
   model?: string;
+  skills?: WorkspaceSkill[];
 }
