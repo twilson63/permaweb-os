@@ -260,8 +260,8 @@ export class PodOrchestrator {
       { name: 'workspace', persistentVolumeClaim: { claimName: pvcName } },
       // Home directory (ephemeral)
       { name: 'home-opencode', emptyDir: {} },
-      // LLM API keys
-      { name: 'llm-secrets', secret: { secretName: opts.llmSecretName } },
+      // LLM API keys (optional - may not exist if user hasn't registered keys)
+      { name: 'llm-secrets', secret: { secretName: opts.llmSecretName, optional: true } },
       // Owner key for HTTPSig verification (sidecar only)
       { name: 'owner-key', secret: { secretName: opts.ownerKeySecretName } },
     ];
