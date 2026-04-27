@@ -62,13 +62,11 @@ export class PodOrchestrator {
   }
 
   /**
-   * Gets the PVC name for a wallet.
-   * Uses SHA256 hash truncated to 16 chars for Kubernetes compatibility.
+   * Gets the PVC name for a pod.
+   * Uses pod ID for uniqueness - one PVC per pod.
    */
-  private getWorkspacePvcName(ownerWallet: string): string {
-    const normalized = normalizeWalletAddress(ownerWallet);
-    const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 16);
-    return `workspace-${hash}`;
+  private getWorkspacePvcName(podId: string): string {
+    return `workspace-${podId.slice(0, 16)}`;
   }
 
   private getWorkspaceSkillsConfigMapName(podId: string): string {
@@ -77,16 +75,16 @@ export class PodOrchestrator {
 
   /**
    * Creates a PersistentVolumeClaim for user workspace data.
-   * This allows data to persist across pod restarts and scale-to-zero.
+   * One PVC per pod - fresh workspace for each pod creation.
    */
-  async createWorkspacePvc(ownerWallet: string): Promise<string> {
+  async createWorkspacePvc(podId: string): Promise<string> {
     if (!isKubernetesAvailable()) {
       console.log('Kubernetes not available, skipping PVC creation');
-      return this.getWorkspacePvcName(ownerWallet);
+      return this.getWorkspacePvcName(podId);
     }
 
     const { core } = getKubernetesClient();
-    const pvcName = this.getWorkspacePvcName(ownerWallet);
+    const pvcName = this.getWorkspacePvcName(podId);
 
     // Check if PVC already exists
     try {
@@ -106,7 +104,7 @@ export class PodOrchestrator {
         labels: {
           'app.kubernetes.io/name': 'web-os-workspace',
           'app.kubernetes.io/part-of': 'web-os',
-          'owner-wallet': ownerWallet,
+          'pod-id': podId,
         },
       },
       spec: {
@@ -121,7 +119,7 @@ export class PodOrchestrator {
     };
 
     await core.createNamespacedPersistentVolumeClaim({ namespace: this.namespace, body: pvc });
-    console.log(`Created PVC ${pvcName} for owner ${ownerWallet}`);
+    console.log(`Created PVC ${pvcName} for pod ${podId}`);
 
     // Wait for PVC to bind
     const bound = await this.waitForPvcBound(pvcName, 60000);
@@ -161,14 +159,14 @@ export class PodOrchestrator {
   }
 
   /**
-   * Checks if a workspace PVC exists for a wallet.
+   * Checks if a workspace PVC exists for a pod.
    */
-  async workspacePvcExists(ownerWallet: string): Promise<boolean> {
+  async workspacePvcExists(podId: string): Promise<boolean> {
     if (!isKubernetesAvailable()) {
       return false;
     }
 
-    const pvcName = this.getWorkspacePvcName(ownerWallet);
+    const pvcName = this.getWorkspacePvcName(podId);
     
     try {
       const { core } = getKubernetesClient();
@@ -201,7 +199,7 @@ export class PodOrchestrator {
 
     try {
       // Create workspace PVC (idempotent - skips if exists)
-      const pvcName = await this.createWorkspacePvc(opts.ownerWallet);
+      const pvcName = await this.createWorkspacePvc(opts.podId);
 
       // Create owner-key secret first (required for pod to mount)
       await this.createOwnerKeySecret(opts);
@@ -256,7 +254,7 @@ export class PodOrchestrator {
 
     const { core } = getKubernetesClient();
     const podName = `pod-${opts.podId.slice(0, 8)}`;
-    const pvcName = opts.pvcName || this.getWorkspacePvcName(opts.ownerWallet);
+    const pvcName = opts.pvcName || this.getWorkspacePvcName(opts.podId);
     const volumes: any[] = [
       // Persistent workspace - survives pod restart
       { name: 'workspace', persistentVolumeClaim: { claimName: pvcName } },
@@ -614,12 +612,12 @@ export class PodOrchestrator {
     // First delete the pod
     await this.deletePod(podId, { preserveData: false });
 
-    // Then delete the PVC
-    const pvcName = this.getWorkspacePvcName(ownerWallet);
+    // Then delete the PVC (now per-pod, not per-wallet)
+    const pvcName = this.getWorkspacePvcName(podId);
     try {
       const { core } = getKubernetesClient();
       await core.deleteNamespacedPersistentVolumeClaim({ name: pvcName, namespace: this.namespace });
-      console.log(`Deleted PVC ${pvcName} for wallet ${ownerWallet}`);
+      console.log(`Deleted PVC ${pvcName} for pod ${podId}`);
     } catch (error) {
       console.error(`Failed to delete PVC ${pvcName}:`, error);
     }
