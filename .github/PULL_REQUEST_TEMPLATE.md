@@ -1,34 +1,30 @@
 ## Description
 
-<!-- Describe your changes in detail -->
+Add CI/CD documentation and PR template for automated deployment.
+
+**Note:** Workflow files cannot be created via OAuth (missing `workflow` scope). After merging this PR, manually create `.github/workflows/ci.yml` using the content in `docs/GITHUB-ACTIONS.md`.
 
 ## Type of Change
 
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to change)
-- [ ] Documentation update
+- [ ] Bug fix
+- [ ] New feature
+- [x] Documentation update
+- [ ] Breaking change
 
 ## Testing
 
-<!-- Describe how you tested this change -->
+- [ ] Documentation reviewed for accuracy
 
-- [ ] Unit tests pass
-- [ ] Integration tests pass
-- [ ] Manual testing performed
+## Manual Steps After Merge
 
-## Checklist
-
-- [ ] My code follows the code style of this project
-- [ ] I have updated the documentation accordingly
-- [ ] I have added tests to cover my changes
-- [ ] All new and existing tests passed
-- [ ] My changes generate no new warnings
-
-## Screenshots (if appropriate)
-
-<!-- Add screenshots to help explain your changes -->
+1. Go to GitHub Settings > Secrets > Actions
+2. Add `DIGITALOCEAN_ACCESS_TOKEN` secret
+3. Create `.github/workflows/ci.yml` (see docs/GITHUB-ACTIONS.md)
+4. Configure branch protection for `main`:
+   - Require PR before merging
+   - Require approvals: 1
+   - Require status checks: `test`
 
 ## Related Issues
 
-<!-- Link any related issues here using #issue_number -->
+Implements automated deployment on merge to main.
