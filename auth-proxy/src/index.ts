@@ -67,6 +67,10 @@ const OWNER_PUBLIC_KEY_PEM_FILE = process.env.OWNER_PUBLIC_KEY_PEM_FILE || '/sec
 const SESSION_SECRET = process.env.SESSION_SECRET || 'web-os-session';
 const SESSION_DURATION_HOURS = parseInt(process.env.SESSION_DURATION_HOURS || '24');
 const DOMAIN = process.env.DOMAIN || 'pods.permaweb.run';
+const POD_NAME = process.env.POD_NAME || '';
+const POD_NAMESPACE = process.env.POD_NAMESPACE || 'web-os';
+const ACTIVITY_ANNOTATION = 'web-os.io/last-used-at';
+const ACTIVITY_UPDATE_INTERVAL_MS = parseInt(process.env.ACTIVITY_UPDATE_INTERVAL_MS || '300000', 10);
 
 import { readFileSync, existsSync } from 'fs';
 
@@ -441,7 +445,72 @@ async function handleAuthVerify(req: http.IncomingMessage, res: http.ServerRespo
   });
 }
 
+let lastActivityUpdateMs = 0;
+
+function markPodActivity(): void {
+  const now = Date.now();
+  if (!POD_NAME || now - lastActivityUpdateMs < ACTIVITY_UPDATE_INTERVAL_MS) {
+    return;
+  }
+
+  lastActivityUpdateMs = now;
+  patchPodActivity(new Date(now).toISOString()).catch((err) => {
+    console.warn('Failed to update pod activity annotation:', err instanceof Error ? err.message : err);
+  });
+}
+
+async function patchPodActivity(timestamp: string): Promise<void> {
+  const tokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+  const caPath = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt';
+  const host = process.env.KUBERNETES_SERVICE_HOST;
+  const port = process.env.KUBERNETES_SERVICE_PORT || '443';
+
+  if (!host || !existsSync(tokenPath)) {
+    return;
+  }
+
+  const token = readFileSync(tokenPath, 'utf-8').trim();
+  const ca = existsSync(caPath) ? readFileSync(caPath) : undefined;
+  const body = JSON.stringify({
+    metadata: {
+      annotations: {
+        [ACTIVITY_ANNOTATION]: timestamp,
+      },
+    },
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const req = https.request({
+      hostname: host,
+      port,
+      method: 'PATCH',
+      path: `/api/v1/namespaces/${encodeURIComponent(POD_NAMESPACE)}/pods/${encodeURIComponent(POD_NAME)}`,
+      ca,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/merge-patch+json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let responseBody = '';
+      res.on('data', chunk => responseBody += chunk.toString());
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+          resolve();
+        } else {
+          reject(new Error(`Kubernetes API returned ${res.statusCode}: ${responseBody}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 async function proxyRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  markPodActivity();
   const options = {
     hostname: 'localhost',
     port: BACKEND_PORT,

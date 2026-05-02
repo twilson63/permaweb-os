@@ -296,10 +296,12 @@ apply_manifests() {
   
   local manifests=(
     "namespace.yaml"
+    "rbac.yaml"
     "api-deployment.yaml"
     "api-service.yaml"
     "api-hpa.yaml"
     "servicemonitor.yaml"
+    "stale-pod-cleanup.yaml"
   )
   
   for manifest in "${manifests[@]}"; do
