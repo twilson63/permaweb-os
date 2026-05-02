@@ -597,7 +597,7 @@ test("POST /api/pods maps different model providers to different key files", asy
     });
     const openRouterResponse = await createPod(server, session, {
       name: "openrouter-pod",
-      model: "openrouter/anthropic/claude-opus-latest"
+      model: "openrouter/~anthropic/claude-opus-latest"
     });
 
     assert.equal(openaiResponse.status, 201);
