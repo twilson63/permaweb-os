@@ -595,17 +595,25 @@ test("POST /api/pods maps different model providers to different key files", asy
       name: "anthropic-pod",
       model: "anthropic/claude-3-7-sonnet"
     });
+    const openRouterResponse = await createPod(server, session, {
+      name: "openrouter-pod",
+      model: "openrouter/~anthropic/claude-opus-latest"
+    });
 
     assert.equal(openaiResponse.status, 201);
     assert.equal(anthropicResponse.status, 201);
+    assert.equal(openRouterResponse.status, 201);
 
     const openaiPod = await openaiResponse.json();
     const anthropicPod = await anthropicResponse.json();
+    const openRouterPod = await openRouterResponse.json();
 
     assert.equal(openaiPod.llm.provider, "openai");
     assert.equal(openaiPod.llm.keyPath, "/secrets/llm/openai");
     assert.equal(anthropicPod.llm.provider, "anthropic");
     assert.equal(anthropicPod.llm.keyPath, "/secrets/llm/anthropic");
+    assert.equal(openRouterPod.llm.provider, "openrouter");
+    assert.equal(openRouterPod.llm.keyPath, "/secrets/llm/openrouter");
   } finally {
     await server.close();
   }
