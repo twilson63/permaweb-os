@@ -161,6 +161,16 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+    # Allow Kubernetes API access for auth-proxy to patch its own last-used annotation.
+    # RBAC limits each pod service account to get/patch only its own Pod.
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
     # Allow egress to external LLM APIs only
     # Blocks internal cluster access for security
     - to:

@@ -204,6 +204,9 @@ export class PodOrchestrator {
       // Create owner-key secret first (required for pod to mount)
       await this.createOwnerKeySecret(opts);
 
+      // Create per-pod RBAC so auth-proxy can update its own last-used annotation.
+      await this.createPodActivityRbac(opts.podId);
+
       const skillsConfigMapName = opts.skills?.length ? this.getWorkspaceSkillsConfigMapName(opts.podId) : undefined;
 
       if (skillsConfigMapName) {
@@ -309,9 +312,11 @@ export class PodOrchestrator {
           'prometheus.io/port': '3001',
           'prometheus.io/path': '/metrics',
           'owner-key-id': opts.ownerKeyId,
+          'web-os.io/last-used-at': new Date().toISOString(),
         },
       },
       spec: {
+        serviceAccountName: podName,
         restartPolicy: 'OnFailure',
         securityContext: {
           runAsUser: 1000,
@@ -358,6 +363,8 @@ export class PodOrchestrator {
               { name: 'OWNER_PUBLIC_KEY_PEM_FILE', value: '/secrets/owner/public-key.pem' },
               { name: 'DOMAIN', value: this.baseDomain },
               { name: 'WORKSPACE_PATH', value: '/workspace' },
+              { name: 'POD_NAME', valueFrom: { fieldRef: { fieldPath: 'metadata.name' } } },
+              { name: 'POD_NAMESPACE', valueFrom: { fieldRef: { fieldPath: 'metadata.namespace' } } },
             ],
             volumeMounts: [
               { name: 'workspace', mountPath: '/workspace', readOnly: false },
@@ -443,6 +450,95 @@ export class PodOrchestrator {
 
     await core.createNamespacedSecret({ namespace: this.namespace, body: secret });
     console.log(`Created secret ${opts.ownerKeySecretName} for owner ${opts.ownerWallet}`);
+  }
+
+  /**
+   * Creates per-pod RBAC that allows the auth-proxy to patch only its own Pod.
+   */
+  async createPodActivityRbac(podId: string): Promise<void> {
+    if (!isKubernetesAvailable()) {
+      return;
+    }
+
+    const { core, objects } = getKubernetesClient();
+    const podName = `pod-${podId.slice(0, 8)}`;
+
+    try {
+      await core.readNamespacedServiceAccount({ namespace: this.namespace, name: podName });
+    } catch {
+      await core.createNamespacedServiceAccount({
+        namespace: this.namespace,
+        body: {
+          apiVersion: 'v1',
+          kind: 'ServiceAccount',
+          metadata: {
+            name: podName,
+            namespace: this.namespace,
+            labels: {
+              'app.kubernetes.io/name': 'web-os-user-pod-activity',
+              'app.kubernetes.io/part-of': 'web-os',
+              'pod-id': podId.slice(0, 8),
+            },
+          },
+        },
+      });
+    }
+
+    const role = {
+      apiVersion: 'rbac.authorization.k8s.io/v1',
+      kind: 'Role',
+      metadata: {
+        name: podName,
+        namespace: this.namespace,
+        labels: {
+          'app.kubernetes.io/name': 'web-os-user-pod-activity',
+          'app.kubernetes.io/part-of': 'web-os',
+          'pod-id': podId.slice(0, 8),
+        },
+      },
+      rules: [{
+        apiGroups: [''],
+        resources: ['pods'],
+        resourceNames: [podName],
+        verbs: ['get', 'patch'],
+      }],
+    };
+
+    const roleBinding = {
+      apiVersion: 'rbac.authorization.k8s.io/v1',
+      kind: 'RoleBinding',
+      metadata: {
+        name: podName,
+        namespace: this.namespace,
+        labels: {
+          'app.kubernetes.io/name': 'web-os-user-pod-activity',
+          'app.kubernetes.io/part-of': 'web-os',
+          'pod-id': podId.slice(0, 8),
+        },
+      },
+      subjects: [{
+        kind: 'ServiceAccount',
+        name: podName,
+        namespace: this.namespace,
+      }],
+      roleRef: {
+        apiGroup: 'rbac.authorization.k8s.io',
+        kind: 'Role',
+        name: podName,
+      },
+    };
+
+    await this.createObjectIfMissing(objects, role);
+    await this.createObjectIfMissing(objects, roleBinding);
+  }
+
+  private async createObjectIfMissing(objects: ReturnType<typeof getKubernetesClient>['objects'], body: any): Promise<void> {
+    try {
+      await objects.read(body);
+      return;
+    } catch {
+      await objects.create(body);
+    }
   }
 
   /**
@@ -577,6 +673,25 @@ export class PodOrchestrator {
       // Delete workspace skills ConfigMap when present
       try {
         await core.deleteNamespacedConfigMap({ name: this.getWorkspaceSkillsConfigMapName(podId), namespace: this.namespace });
+      } catch { /* ignore */ }
+
+      // Delete per-pod activity RBAC
+      try {
+        await core.deleteNamespacedServiceAccount({ name: podName, namespace: this.namespace });
+      } catch { /* ignore */ }
+      try {
+        await getKubernetesClient().objects.delete({
+          apiVersion: 'rbac.authorization.k8s.io/v1',
+          kind: 'RoleBinding',
+          metadata: { name: podName, namespace: this.namespace },
+        });
+      } catch { /* ignore */ }
+      try {
+        await getKubernetesClient().objects.delete({
+          apiVersion: 'rbac.authorization.k8s.io/v1',
+          kind: 'Role',
+          metadata: { name: podName, namespace: this.namespace },
+        });
       } catch { /* ignore */ }
 
       // Delete Pod
